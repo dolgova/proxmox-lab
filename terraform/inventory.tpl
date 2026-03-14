@@ -1,0 +1,7 @@
+[web_nodes]
+%{ for node in nodes ~}
+${node.name} ansible_host=${node.ssh_host} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+%{ endfor ~}
+
+[web_nodes:vars]
+ansible_python_interpreter=/usr/bin/python3

@@ -1,0 +1,16 @@
+---
+# ansible/roles/ssh-keys/defaults/main.yml
+#
+# These defaults are overridden by group_vars/all.yml
+# See: ansible/group_vars/all.yml for the actual key list
+
+# List of .pub filenames in ansible/roles/ssh-keys/files/keys/
+# Each entry is a filename, e.g. "john.pub" or "deploy-bot.pub"
+ssh_authorized_keys: []
+
+# Key content (not filename) of keys to actively remove.
+# Paste the full public key string here when revoking access.
+ssh_revoked_keys: []
+
+# Set to true to populate /etc/ssh/ssh_known_hosts for intra-cluster SSH
+ssh_populate_known_hosts: false

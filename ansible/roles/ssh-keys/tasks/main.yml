@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# ssh-keys/tasks/main.yml
+# Manages SSH authorized keys across all nodes from a single source of truth.
+#
+# How it works:
+#   1. You define all allowed public keys in ansible/roles/ssh-keys/files/keys/
+#      One file per person/service: john.pub, deploy-bot.pub, etc.
+#   2. This role distributes them to every node
+#   3. Keys in the 'revoked' list are actively removed
+#   4. Running the playbook again is safe — idempotent, no duplicate entries
+#
+# Add a new key:
+#   1. Drop the .pub file into ansible/roles/ssh-keys/files/keys/
+#   2. Add the filename to ssh_authorized_keys in group_vars/all.yml
+#   3. ansible-playbook -i inventory.ini playbook.yml --tags ssh-keys
+#
+# Revoke a key:
+#   1. Remove it from ssh_authorized_keys in group_vars/all.yml
+#   2. Add the key content to ssh_revoked_keys list
+#   3. ansible-playbook -i inventory.ini playbook.yml --tags ssh-keys
+# =============================================================================
+
+- name: Ensure .ssh directory exists for ubuntu user
+  file:
+    path: /home/ubuntu/.ssh
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0700'
+
+# ── Distribute authorized keys ─────────────────────────────────────────────
+
+- name: Add authorized keys from key files
+  authorized_key:
+    user: ubuntu
+    state: present
+    key: "{{ lookup('file', 'keys/' + item) }}"
+    comment: "managed-by-ansible: {{ item }}"
+  loop: "{{ ssh_authorized_keys }}"
+  when: ssh_authorized_keys | length > 0
+  tags: [ssh-keys, add-key]
+
+# ── Revoke keys ────────────────────────────────────────────────────────────
+
+- name: Remove revoked keys
+  authorized_key:
+    user: ubuntu
+    state: absent
+    key: "{{ item }}"
+  loop: "{{ ssh_revoked_keys }}"
+  when: ssh_revoked_keys | length > 0
+  tags: [ssh-keys, revoke-key]
+
+# ── Deploy known_hosts (optional: prevents host key warnings) ──────────────
+
+- name: Write /etc/ssh/ssh_known_hosts for intra-cluster SSH
+  template:
+    src: known_hosts.j2
+    dest: /etc/ssh/ssh_known_hosts
+    owner: root
+    group: root
+    mode: '0644'
+  when: ssh_populate_known_hosts | bool
+  tags: [ssh-keys, known-hosts]
+
+# ── Audit ─────────────────────────────────────────────────────────────────
+
+- name: Read current authorized_keys (audit output)
+  command: cat /home/ubuntu/.ssh/authorized_keys
+  register: current_keys
+  changed_when: false
+  tags: [ssh-keys, audit]
+
+- name: Show authorized keys on this node
+  debug:
+    msg:
+      - "Node: {{ ansible_hostname }} ({{ ansible_default_ipv4.address }})"
+      - "Authorized keys:"
+      - "{{ current_keys.stdout_lines }}"
+  tags: [ssh-keys, audit]

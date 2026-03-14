@@ -1,0 +1,19 @@
+# terraform/terraform.tfvars.example
+#
+# Copy this file to terraform.tfvars and fill in your values.
+# NEVER commit terraform.tfvars — it's in .gitignore.
+#
+# Alternatively, use environment variables:
+#   export TF_VAR_proxmox_api_token_secret="your-token-here"
+#
+
+proxmox_api_url          = "https://192.168.1.100:8006/api2/json"
+proxmox_api_token_id     = "terraform@pve!terraform-token"
+proxmox_api_token_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+proxmox_node = "pve"
+node_count   = 1
+
+vm_cores     = 1
+vm_memory    = 512
+vm_disk_size = "10G"

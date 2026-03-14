@@ -1,0 +1,14 @@
+---
+# ansible/host_vars/web-node-1.yml
+# Per-node variable overrides for web-node-1
+# Filename must match the inventory hostname exactly.
+#
+# These override group_vars/all.yml for this specific host only.
+
+# This node is the primary — give it a distinguishing role label in the MOTD
+motd_node_role: "web-node (primary)"
+
+# If this node needs a different set of authorized keys than the rest:
+# ssh_authorized_keys:
+#   - admin.pub
+#   - ops-lead.pub   # extra access on the primary node only

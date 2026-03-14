@@ -1,0 +1,7 @@
+---
+# ansible/roles/motd/defaults/main.yml
+# Override these in group_vars/all.yml or per-host in host_vars/
+
+motd_cluster_name: "proxmox-lab"
+motd_node_role:    "web-node"
+motd_proxmox_host: "192.168.1.100"

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node: {{ ansible_hostname }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e1a;
+            color: #00ff88;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            border: 1px solid #00ff88;
+            padding: 40px 60px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(0,255,136,0.2);
+        }
+        .label { color: #555; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; }
+        .hostname { font-size: 48px; font-weight: bold; margin: 10px 0; }
+        .ip { font-size: 18px; color: #00aaff; margin-top: 8px; }
+        .status { margin-top: 20px; color: #00ff88; font-size: 13px; }
+        .dot { display: inline-block; width: 8px; height: 8px; background: #00ff88; border-radius: 50%; margin-right: 8px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="label">Hello from</div>
+        <div class="hostname">{{ ansible_hostname }}</div>
+        <div class="ip">{{ ansible_default_ipv4.address }}</div>
+        <div class="status">
+            <span class="dot"></span>
+            Node is running · Proxmox Lab
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,42 @@
+# /etc/infra-info
+# =============================================================================
+# Infrastructure Information — Managed by Ansible
+# DO NOT EDIT MANUALLY — changes will be overwritten on next ansible run
+#
+# This file is deployed by: ansible/roles/motd/templates/infra-info.j2
+# =============================================================================
+
+[node]
+hostname     = {{ ansible_hostname }}
+ip_address   = {{ ansible_default_ipv4.address }}
+mac_address  = {{ ansible_default_ipv4.macaddress }}
+os           = {{ ansible_distribution }} {{ ansible_distribution_version }}
+kernel       = {{ ansible_kernel }}
+cpu_cores    = {{ ansible_processor_vcpus }}
+ram_mb       = {{ (ansible_memtotal_mb) }}
+
+[cluster]
+name         = {{ motd_cluster_name }}
+role         = {{ motd_node_role }}
+proxmox_host = {{ motd_proxmox_host }}
+
+[provisioning]
+provisioned_by  = Terraform + Ansible
+terraform_state = managed
+ansible_managed = true
+last_configured = {{ ansible_date_time.iso8601 }}
+playbook        = ansible/playbook.yml
+
+[access]
+ssh_user        = ubuntu
+auth_method     = key-only (password auth disabled)
+root_login      = disabled
+authorized_keys = managed by Ansible (ansible/roles/ssh-keys)
+
+[services]
+nginx           = port 80 (hello world site)
+node_exporter   = port 9100 (Prometheus metrics)
+
+[compliance]
+config_managed  = true
+change_tracking = Git (see repo CHANGELOG.md)

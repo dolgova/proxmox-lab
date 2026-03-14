@@ -1,0 +1,46 @@
+---
+# =============================================================================
+# motd/tasks/main.yml
+# Deploys a dynamic Message of the Day to each node.
+# The MOTD is rendered per-node using Jinja2 — every node shows its own
+# hostname, IP, and cluster role on SSH login.
+#
+# Demo:
+#   ssh ubuntu@192.168.1.101
+#   → You'll see the banner before the shell prompt
+# =============================================================================
+
+- name: Disable default Ubuntu MOTD scripts (clears generic noise)
+  file:
+    path: "{{ item }}"
+    mode: '0644'       # remove execute bit → script is skipped by PAM
+  loop:
+    - /etc/update-motd.d/10-help-text
+    - /etc/update-motd.d/50-motd-news
+    - /etc/update-motd.d/91-release-upgrade
+  ignore_errors: yes   # files may not exist on all Ubuntu versions
+
+- name: Deploy dynamic MOTD script from Jinja2 template
+  template:
+    src: motd.j2
+    dest: /etc/update-motd.d/01-proxmox-lab
+    owner: root
+    group: root
+    mode: '0755'       # must be executable for PAM to run it
+
+- name: Deploy static /etc/infra-info file (asset tracking)
+  template:
+    src: infra-info.j2
+    dest: /etc/infra-info
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Verify MOTD renders without errors
+  command: /etc/update-motd.d/01-proxmox-lab
+  register: motd_check
+  changed_when: false
+
+- name: Show MOTD preview in Ansible output
+  debug:
+    msg: "{{ motd_check.stdout_lines }}"

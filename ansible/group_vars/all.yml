@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# ansible/group_vars/all.yml
+# Variables applied to ALL hosts in the inventory.
+# Override per-host in host_vars/<hostname>.yml
+# =============================================================================
+
+# ── SSH Key Management ────────────────────────────────────────────────────
+# List the .pub filenames from ansible/roles/ssh-keys/files/keys/
+# These keys will be added to /home/ubuntu/.ssh/authorized_keys on every node.
+#
+# To add a new key:
+#   1. Copy your .pub file to ansible/roles/ssh-keys/files/keys/yourname.pub
+#   2. Add the filename below
+#   3. Run: ansible-playbook -i inventory.ini playbook.yml --tags ssh-keys
+
+ssh_authorized_keys:
+  - admin.pub           # primary administrator
+  # - deploy-bot.pub    # CI/CD pipeline key — uncomment when ready
+  # - john.pub          # developer access — remove when offboarding
+
+# Keys to actively revoke (paste full key content, not filename).
+# Keys listed here are REMOVED from authorized_keys on every node.
+# Move keys here when offboarding users or rotating credentials.
+ssh_revoked_keys: []
+  # - "ssh-rsa AAAAB3NzaC1yc2E... oldkey@laptop"  # john revoked 2026-03-15
+
+# ── MOTD / Node Identity ──────────────────────────────────────────────────
+motd_cluster_name: "proxmox-lab"
+motd_proxmox_host: "192.168.1.100"
+
+# Default role — override in host_vars for specialised nodes
+motd_node_role: "web-node"
+
+# ── Node Exporter ─────────────────────────────────────────────────────────
+node_exporter_version: "1.7.0"
+node_exporter_port: 9100

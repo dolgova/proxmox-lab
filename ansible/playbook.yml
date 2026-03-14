@@ -1,0 +1,248 @@
+---
+# =============================================================================
+# playbook.yml — Configures all web nodes after Terraform provisions them
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbook.yml           # full run
+#   ansible-playbook -i inventory.ini playbook.yml --limit web-node-2   # single node
+#   ansible-playbook -i inventory.ini playbook.yml --tags ssh-keys      # keys only
+#   ansible-playbook -i inventory.ini playbook.yml --tags motd          # MOTD only
+#   ansible-playbook -i inventory.ini playbook.yml --check              # dry run
+# =============================================================================
+
+- name: Configure web nodes
+  hosts: web_nodes
+  become: yes
+  gather_facts: yes
+
+  vars_files:
+    - group_vars/all.yml
+
+  tasks:
+
+    # ── System baseline ───────────────────────────────────────────────────
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - nginx
+          - curl
+          - wget
+          - htop
+          - net-tools
+          - python3
+          - python3-pip
+        state: present
+
+    # ── SSH Key Management ────────────────────────────────────────────────
+    # Distributes authorized keys to all nodes from a central source.
+    # Add/remove keys in group_vars/all.yml and re-run with --tags ssh-keys
+
+    - name: Ensure .ssh directory exists
+      file:
+        path: /home/ubuntu/.ssh
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0700'
+      tags: [ssh-keys]
+
+    - name: Add authorized keys from key files
+      authorized_key:
+        user: ubuntu
+        state: present
+        key: "{{ lookup('file', 'roles/ssh-keys/files/keys/' + item) }}"
+        comment: "managed-by-ansible: {{ item }}"
+      loop: "{{ ssh_authorized_keys }}"
+      when: ssh_authorized_keys | length > 0
+      tags: [ssh-keys, add-key]
+
+    - name: Remove revoked keys
+      authorized_key:
+        user: ubuntu
+        state: absent
+        key: "{{ item }}"
+      loop: "{{ ssh_revoked_keys }}"
+      when: ssh_revoked_keys | length > 0
+      tags: [ssh-keys, revoke-key]
+
+    - name: Show current authorized keys (audit)
+      command: cat /home/ubuntu/.ssh/authorized_keys
+      register: current_keys
+      changed_when: false
+      tags: [ssh-keys, audit]
+
+    - name: Print authorized keys per node
+      debug:
+        msg: "{{ ansible_hostname }} ({{ ansible_default_ipv4.address }}) → {{ current_keys.stdout_lines | length }} key(s)"
+      tags: [ssh-keys, audit]
+
+    # ── Hello World site ──────────────────────────────────────────────────
+
+    - name: Create hello world HTML page
+      template:
+        src: roles/webserver/templates/index.html.j2
+        dest: /var/www/html/index.html
+        owner: www-data
+        group: www-data
+        mode: '0644'
+      notify: Reload nginx
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Write nginx site config
+      template:
+        src: roles/webserver/templates/nginx.conf.j2
+        dest: /etc/nginx/sites-available/helloworld
+        mode: '0644'
+      notify: Reload nginx
+
+    - name: Enable nginx site
+      file:
+        src: /etc/nginx/sites-available/helloworld
+        dest: /etc/nginx/sites-enabled/helloworld
+        state: link
+      notify: Reload nginx
+
+    - name: Ensure nginx is started and enabled
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # ── MOTD — Message of the Day ─────────────────────────────────────────
+    # Deploys a dynamic banner shown on SSH login.
+    # Each node shows its own hostname, IP, role, and service status.
+    # Also deploys /etc/infra-info for asset tracking.
+
+    - name: Disable noisy default Ubuntu MOTD scripts
+      file:
+        path: "{{ item }}"
+        mode: '0644'
+      loop:
+        - /etc/update-motd.d/10-help-text
+        - /etc/update-motd.d/50-motd-news
+        - /etc/update-motd.d/91-release-upgrade
+      ignore_errors: yes
+      tags: [motd]
+
+    - name: Deploy dynamic MOTD script from Jinja2 template
+      template:
+        src: roles/motd/templates/motd.j2
+        dest: /etc/update-motd.d/01-proxmox-lab
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [motd]
+
+    - name: Deploy /etc/infra-info (asset tracking file)
+      template:
+        src: roles/motd/templates/infra-info.j2
+        dest: /etc/infra-info
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [motd, infra-info]
+
+    - name: Verify MOTD renders cleanly
+      command: /etc/update-motd.d/01-proxmox-lab
+      register: motd_render
+      changed_when: false
+      tags: [motd]
+
+    - name: Preview MOTD in Ansible output
+      debug:
+        msg: "{{ motd_render.stdout_lines }}"
+      tags: [motd]
+
+    # ── Prometheus Node Exporter ──────────────────────────────────────────
+
+    - name: Create node_exporter user
+      user:
+        name: node_exporter
+        shell: /bin/false
+        system: yes
+        create_home: no
+
+    - name: Download node exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract node exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Install node exporter binary
+      copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        owner: node_exporter
+        group: node_exporter
+        mode: '0755'
+        remote_src: yes
+
+    - name: Create node exporter systemd service
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          User=node_exporter
+          Group=node_exporter
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter --web.listen-address=:{{ node_exporter_port }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload systemd
+
+    - name: Start and enable node exporter
+      service:
+        name: node_exporter
+        state: started
+        enabled: yes
+
+    # ── SSH hardening ─────────────────────────────────────────────────────
+
+    - name: Harden SSH config
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^#?PermitRootLogin',        line: 'PermitRootLogin no' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?X11Forwarding',          line: 'X11Forwarding no' }
+      notify: Restart sshd
+
+  handlers:
+    - name: Reload nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart sshd
+      service:
+        name: sshd
+        state: restarted
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes

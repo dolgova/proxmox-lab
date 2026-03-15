@@ -368,22 +368,7 @@ ansible web_nodes -i inventory.ini -m raw -a "hostname"
 # localhost
 ```
 
-### Demo 1 — Deploy MOTD (Message of the Day)
-
-```bash
-ansible web_nodes -i inventory.ini -m raw -a "
-printf 'Welcome to Proxmox Lab\nNode: web-node-1\nIP: 192.168.1.101\nManaged by: Ansible + Terraform\nCluster: Lab\n' > /etc/motd
-cat /etc/motd
-"
-```
-
-Verify — SSH into the node and the MOTD appears automatically:
-```bash
-ssh -i ~/.ssh/proxmox-lab root@192.168.1.101
-# Banner appears on login
-```
-
-### Demo 2 — SSH Key Management
+### Case use #1 — SSH Key Management
 
 ```bash
 # Audit current authorized keys across all nodes
@@ -404,7 +389,7 @@ echo 'Key removed. Remaining keys:' && wc -l /root/.ssh/authorized_keys
 "
 ```
 
-### Demo 3 — Asset Tracking File (/etc/infra-info)
+### Case use #2 — Asset Tracking File (/etc/infra-info)
 
 ```bash
 ansible web_nodes -i inventory.ini -m raw -a "
@@ -412,21 +397,6 @@ printf '[node]\nhostname = web-node-1\nip_address = 192.168.1.101\nos = Alpine L
 cat /etc/infra-info
 "
 ```
-
-### Run all three demos at once
-
-```bash
-ansible web_nodes -i inventory.ini -m raw -a "
-printf 'Welcome to Proxmox Lab\nManaged by: Ansible + Terraform\n' > /etc/motd
-printf '[node]\nhostname=web-node-1\nip=192.168.1.101\nmanaged_by=Ansible\nlast_run=\$(date -u)\n' > /etc/infra-info
-echo 'All demos deployed successfully'
-cat /etc/motd
-echo '---'
-cat /etc/infra-info
-"
-```
-
----
 
 ## Useful Commands
 

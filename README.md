@@ -208,7 +208,7 @@ iface eth0 inet static
     netmask 255.255.255.0
     gateway 192.168.1.1
 EOF
-echo 'root:Alpine2026' | chpasswd
+echo 'root:XXXXX' | chpasswd
 apk add openssh
 rc-service sshd start
 rc-update add sshd default

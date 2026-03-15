@@ -17,7 +17,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # --- Config (edit these) ---
 PROXMOX_IP="192.168.1.100"       # Your Proxmox host IP
-BRIDGE_IFACE="eno1"              # Physical NIC (check with: ip link)
+BRIDGE_IFACE="nic0"              # Physical NIC (check with: ip link)
 VM_TEMPLATE_ID="9000"            # Template VM ID for cloud-init
 UBUNTU_ISO_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 

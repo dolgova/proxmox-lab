@@ -1,184 +1,236 @@
-# Terraform Patterns
+# Terraform Patterns — Proxmox Lab
 
-Copy these patterns exactly when generating new Terraform code.
-Do not invent new patterns — extend these.
+Correct patterns for the `bpg/proxmox` provider in this environment.
+Read before generating any Terraform code.
 
 ---
 
-## Adding a New VM Type
-
-Every new VM type follows this exact 4-file pattern.
-
-### 1. variables.tf — add count + sizing variables
+## Provider Configuration
 
 ```hcl
-variable "{purpose}_node_count" {
-  description = "Number of {purpose} VMs to provision"
-  type        = number
-  default     = 1
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = ">= 0.78.0"
+    }
+  }
 }
 
-variable "{purpose}_vm_memory" {
-  description = "RAM per {purpose} VM in MB"
-  type        = number
-  default     = 1024
-}
+provider "proxmox" {
+  endpoint = "https://${var.proxmox_host}:8006/"
+  username = "root@pam"
+  password = var.proxmox_password
+  insecure = true   # Self-signed cert
 
-variable "{purpose}_vm_cores" {
-  description = "CPU cores per {purpose} VM"
-  type        = number
-  default     = 1
+  ssh {
+    agent = false
+  }
 }
 ```
 
-### 2. main.tf — add resource block
+**Do NOT use the telmate/proxmox provider** — it has a `VM.Monitor` permission bug
+on Proxmox 9 that prevents VM creation.
+
+---
+
+## VM Resource Pattern
 
 ```hcl
-resource "proxmox_vm_qemu" "{purpose}_node" {
-  count       = var.{purpose}_node_count
-  name        = "{purpose}-node-${count.index + 1}"
-  target_node = var.proxmox_node
-  clone       = var.vm_template
-  agent       = 1
-  os_type     = "cloud-init"
+resource "proxmox_virtual_environment_vm" "web_node" {
+  count     = var.node_count
+  name      = "web-node-${count.index + 1}"
+  node_name = "proxmox"
+  vm_id     = 101 + count.index
 
-  cores   = var.{purpose}_vm_cores
-  sockets = 1
-  memory  = var.{purpose}_vm_memory
+  clone {
+    vm_id = 100    # golden-template — NOT 9000
+    full  = true
+  }
+
+  # MUST be false — KVM disabled manually before starting
+  started = false
+
+  # Alpine doesn't have qemu-guest-agent
+  agent {
+    enabled = false
+  }
+
+  cpu {
+    cores = var.vm_cores
+    type  = "x86-64-v2-AES"
+  }
+
+  memory {
+    dedicated = var.vm_memory
+  }
+
+  network_device {
+    bridge = "vmbr0"
+  }
 
   disk {
-    slot    = 0
-    size    = var.vm_disk_size
-    type    = "scsi"
-    storage = "local-lvm"
+    datastore_id = var.storage_pool
+    interface    = "scsi0"
+    size         = 2    # GB — keep small for fast cloning
   }
 
-  network {
-    model  = "virtio"
-    bridge = var.vm_network_bridge
-  }
-
-  ipconfig0 = "ip=dhcp"
-  ciuser    = "ubuntu"
-  sshkeys   = file(var.ssh_public_key)
-
-  provisioner "remote-exec" {
-    inline = ["echo 'VM is up'"]
-    connection {
-      type        = "ssh"
-      user        = "ubuntu"
-      private_key = file("~/.ssh/id_rsa")
-      host        = self.ssh_host
-      timeout     = "3m"
-    }
+  # Cloud-init for hostname only (network pre-configured in golden image)
+  initialization {
+    hostname = "web-node-${count.index + 1}"
   }
 
   lifecycle {
-    ignore_changes = [network]
+    ignore_changes = [
+      started,    # Managed by scale.sh, not Terraform
+    ]
   }
-}
-```
-
-### 3. outputs.tf — add IP output
-
-```hcl
-output "{purpose}_node_ips" {
-  description = "IP addresses of all {purpose} VMs"
-  value = {
-    for vm in proxmox_vm_qemu.{purpose}_node :
-    vm.name => vm.ssh_host
-  }
-}
-```
-
-### 4. inventory.tpl — add new group
-
-```
-[{purpose}_nodes]
-%{ for node in {purpose}_nodes ~}
-${node.name} ansible_host=${node.ssh_host} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-%{ endfor ~}
-
-[{purpose}_nodes:vars]
-ansible_python_interpreter=/usr/bin/python3
-```
-
-Also update the `local_file.ansible_inventory` resource in `main.tf` to pass the new nodes:
-
-```hcl
-resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tpl", {
-    nodes          = proxmox_vm_qemu.web_node
-    {purpose}_nodes = proxmox_vm_qemu.{purpose}_node   # add this line
-  })
-  filename   = "../ansible/inventory.ini"
-  depends_on = [proxmox_vm_qemu.web_node, proxmox_vm_qemu.{purpose}_node]
 }
 ```
 
 ---
 
-## Changing VM Resources (Existing VMs)
-
-Edit `variables.tf` only — never hardcode in `main.tf`:
+## Variables Pattern
 
 ```hcl
-# Increase web node RAM from 512 to 1024
+# terraform/variables.tf
+
+variable "node_count" {
+  description = "Number of web nodes to provision"
+  type        = number
+  default     = 1
+}
+
 variable "vm_memory" {
-  default = 1024   # was 512
+  description = "RAM per VM in MB"
+  type        = number
+  default     = 256
+}
+
+variable "vm_cores" {
+  description = "CPU cores per VM"
+  type        = number
+  default     = 1
+}
+
+variable "proxmox_host" {
+  description = "Proxmox host IP"
+  type        = string
+  default     = "192.168.1.100"
+}
+
+variable "proxmox_password" {
+  description = "Proxmox root password"
+  type        = string
+  sensitive   = true
+}
+
+variable "clone_vm_id" {
+  description = "Template VM to clone from"
+  type        = number
+  default     = 100
+}
+
+variable "storage_pool" {
+  description = "Proxmox storage pool"
+  type        = string
+  default     = "local-lvm"
 }
 ```
 
-Then run:
+---
+
+## Outputs Pattern
+
+```hcl
+# terraform/outputs.tf
+
+output "vm_ids" {
+  description = "VM IDs of provisioned nodes"
+  value       = proxmox_virtual_environment_vm.web_node[*].vm_id
+}
+
+output "vm_names" {
+  description = "Names of provisioned nodes"
+  value       = proxmox_virtual_environment_vm.web_node[*].name
+}
+
+output "node_count" {
+  description = "Number of provisioned nodes"
+  value       = var.node_count
+}
+```
+
+---
+
+## Common Mistakes to Avoid
+
+### Wrong provider
+
+```hcl
+# WRONG — telmate provider, will fail on Proxmox 9
+resource "proxmox_vm_qemu" "web_node" { ... }
+
+# CORRECT — bpg provider
+resource "proxmox_virtual_environment_vm" "web_node" { ... }
+```
+
+### Wrong clone source
+
+```hcl
+# WRONG — raw cloud image, no SSH configured
+clone {
+  vm_id = 9000
+}
+
+# CORRECT — golden image with SSH ready
+clone {
+  vm_id = 100
+}
+```
+
+### VM started = true
+
+```hcl
+# WRONG — KVM must be disabled before starting
+started = true
+
+# CORRECT — configure-node.sh handles startup
+started = false
+```
+
+### Agent enabled
+
+```hcl
+# WRONG — qemu-guest-agent not installed in Alpine
+agent {
+  enabled = true
+}
+
+# CORRECT
+agent {
+  enabled = false
+}
+```
+
+### Using terraform apply directly
+
 ```bash
-terraform apply   # Proxmox hot-updates memory where possible; CPU/disk may require restart
+# WRONG — doesn't manage single-VM constraint
+terraform apply -var="node_count=2"
+
+# CORRECT — handles stop-all + start-one + inventory update
+bash scripts/scale.sh 2
 ```
 
 ---
 
-## Adding a Second Network Interface
+## Adding a New Resource
 
-Add inside the existing `proxmox_vm_qemu` resource block, after the first `network {}`:
+When adding infrastructure beyond VMs (e.g., LXC containers, storage, networks):
 
-```hcl
-network {
-  model  = "virtio"
-  bridge = "vmbr1"    # second bridge — must exist on Proxmox host
-}
-```
-
----
-
-## Static IP Instead of DHCP
-
-Replace `ipconfig0 = "ip=dhcp"` with:
-
-```hcl
-ipconfig0 = "ip=192.168.1.${count.index + 110}/24,gw=192.168.1.1"
-```
-
-Adjust the base offset (`110`) to avoid conflicts with DHCP range.
-
----
-
-## Adding a Provisioner to Trigger Ansible on New Nodes Only
-
-This is already in the web_node resource. For new VM types, copy the same pattern:
-
-```hcl
-provisioner "local-exec" {
-  command = "cd ../ansible && ansible-playbook -i inventory.ini playbook.yml --limit {purpose}-node-${count.index + 1}"
-}
-```
-
----
-
-## Variable Naming Conventions
-
-| Pattern | Example |
-|---|---|
-| Node count | `{purpose}_node_count` |
-| VM memory | `{purpose}_vm_memory` |
-| VM cores | `{purpose}_vm_cores` |
-| Shared values | `vm_disk_size`, `vm_network_bridge`, `vm_template` |
-| Proxmox connection | `proxmox_api_url`, `proxmox_api_token_id`, `proxmox_node` |
+1. Use `bpg/proxmox` resource types — check provider docs for correct resource name
+2. Reference existing variables where applicable
+3. Keep `started = false` pattern for anything that needs manual config before boot
+4. Update `scripts/scale.sh` if the new resource interacts with the scaling workflow
+5. Test with `terraform plan` before applying

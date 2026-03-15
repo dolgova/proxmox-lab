@@ -1,88 +1,166 @@
 ---
 name: scale-policy-editor
 description: >
-  Helps configure and tune the autoscaler for the Proxmox Private Cloud Lab.
-  Use this skill whenever a developer wants to change scaling thresholds, adjust
-  cooldown periods, modify min/max node counts, switch from CPU-based to
-  memory-based scaling, or understand why the autoscaler is behaving unexpectedly.
-  Triggers on: "change the scaling threshold", "autoscaler is too aggressive",
-  "autoscaler won't scale down", "scale based on memory instead of CPU",
-  "nodes keep flapping", "why did it add a node", "autoscaler triggers too fast",
-  "I want it to scale at 50% CPU", "increase max nodes", "change cooldown",
-  or any request to tune, explain, or modify autoscaling behaviour.
+  Manages scaling configuration and the scale.sh wrapper script for the Proxmox lab.
+  Use when someone wants to change autoscaler thresholds, modify how many VMs are
+  provisioned, change which VM is active, fix scaling issues, or understand how
+  scale.sh works. Triggers on: "change scale threshold", "why won't it scale",
+  "autoscaler not working", "how do I switch active node", "scale to N nodes",
+  "too many VMs running", "Proxmox keeps crashing when scaling".
+  Critical: this environment can only run ONE VM at a time due to 7.7GB RAM.
+  scale.sh is the primary scaling interface — not terraform apply directly.
 ---
 
 # Scale Policy Editor
 
-Explains autoscaler behaviour, recommends policy changes for different workload
-patterns, and generates the exact `autoscale.sh` edits needed.
+Manages the scaling workflow for a resource-constrained single-laptop environment.
 
 ---
 
-## Autoscaler config block (top of autoscale/autoscale.sh)
+## How scaling works in this environment
+
+This is not a normal multi-VM environment. Key constraints:
+
+- **7.7GB RAM total** — Proxmox uses ~1.6GB, each VM uses ~256MB
+- **Only ONE VM can be running at a time** — running 2+ crashes Proxmox under NEM emulation
+- **All active VMs use IP 192.168.1.101** — same IP, just different VM IDs
+- **scale.sh is the primary interface** — handles the provision + stop-all + start-one logic
+
+---
+
+## scale.sh — how it works
 
 ```bash
-SCALE_UP_THRESHOLD=70       # Scale up when avg CPU% exceeds this
-SCALE_DOWN_THRESHOLD=25     # Scale down when avg CPU% drops below this
-MIN_NODES=1                 # Never go below this
-MAX_NODES=5                 # Never go above this
-CHECK_INTERVAL=15           # Seconds between CPU checks
-COOLDOWN=60                 # Seconds to wait after a scale event
+bash scripts/scale.sh <count>
 ```
 
-These are the only values that need to change for policy tuning.
-Never modify the decision logic itself unless the developer asks explicitly.
+1. Runs `terraform apply -var="node_count=<count>"` — creates all VMs
+2. Stops all running VMs
+3. Asks: "Which node should be the PRIMARY?"
+4. Starts only the selected VM
+5. Rewrites `ansible/inventory.ini` to point to active node
 
 ---
 
-## Workflow
-
-### Step 1 — Understand the workload
-
-Ask or infer:
-- Is load **spiky** (burst then drop) or **gradual** (ramps up over time)?
-- What is the **consequence of under-scaling**? (slow response vs. outage)
-- What is the **consequence of over-scaling**? (wasted resources vs. acceptable)
-- Is the metric **CPU** or **memory**? (most web workloads = CPU; caches/DBs = memory)
-
-### Step 2 — Recommend a policy
-
-Read `references/policy-guide.md` for workload-to-policy mappings.
-
-### Step 3 — Generate the edit
-
-Always show the before/after diff and the exact sed command or manual edit:
+## Switching active node without reprovisioning
 
 ```bash
-# Example: change SCALE_UP_THRESHOLD from 70 to 85
-sed -i 's/^SCALE_UP_THRESHOLD=.*/SCALE_UP_THRESHOLD=85/' autoscale/autoscale.sh
+# Stop current active node
+ssh proxmox "qm stop 101"
+
+# Start a different node
+ssh proxmox "qm start 102"
+
+# Update inventory to point to new active node
+cat > ansible/inventory.ini << 'EOF'
+[web_nodes]
+web-node-2 ansible_host=192.168.1.101 ansible_user=root ansible_ssh_private_key_file=~/.ssh/proxmox-lab ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[web_nodes:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
 ```
-
-### Step 4 — Explain the tradeoff
-
-For every policy change, explain what it optimises for and what it sacrifices.
-Never just change a number without explaining the consequence.
 
 ---
 
-## Output format
+## Autoscaler — autoscale/autoscale.sh
 
+The autoscaler monitors CPU and calls terraform to scale up or down.
+
+```bash
+# Run normally (monitors in background)
+bash autoscale/autoscale.sh
+
+# Demo mode — forces CPU high to trigger scale-up
+bash autoscale/autoscale.sh --stress
 ```
-## Recommended policy
 
-| Setting | Current | Recommended | Why |
-|---|---|---|---|
-| SCALE_UP_THRESHOLD | 70 | 85 | [reason] |
-| COOLDOWN | 60 | 120 | [reason] |
+### Key variables to tune
 
-## Tradeoff
-[What this optimises for and what it sacrifices]
-
-## Apply it
-\```bash
-[sed commands or manual edit instructions]
-\```
-
-## Verify
-[How to confirm the new policy is working — what to look for in autoscaler output]
+```bash
+# In autoscale/autoscale.sh — edit these:
+SCALE_UP_THRESHOLD=80    # CPU % that triggers adding a node
+SCALE_DOWN_THRESHOLD=20  # CPU % that triggers removing a node
+SCALE_UP_COOLDOWN=120    # Seconds between scale-up events
+SCALE_DOWN_COOLDOWN=300  # Seconds between scale-down events
+MIN_NODES=1              # Never go below this
+MAX_NODES=2              # IMPORTANT: keep at 2 max for this hardware
+POLL_INTERVAL=30         # How often to check CPU
 ```
+
+**Important:** Keep MAX_NODES at 2 for this environment. Even though scale.sh only
+runs one VM at a time, the autoscaler needs to provision 2 to demonstrate the
+scale-up behavior. Running 3+ simultaneously will crash Proxmox.
+
+---
+
+## Fixing scale issues
+
+### "Proxmox crashes when I scale to 2"
+The autoscaler or scale.sh started both VMs simultaneously. Fix:
+```bash
+ssh proxmox "qm stop 102"  # stop the second node immediately
+```
+Then ensure MAX_NODES=2 and scale.sh is used (not terraform apply directly).
+
+### "scale.sh picked wrong node as primary"
+Re-run scale.sh — it will stop all nodes and ask again:
+```bash
+bash scripts/scale.sh 2
+# Enter your preferred node number when prompted
+```
+
+### "Terraform created too many VMs"
+```bash
+# Check what exists
+ssh proxmox "qm list"
+
+# Scale down via terraform
+cd terraform && terraform apply -var="node_count=1" -auto-approve
+
+# If state is inconsistent
+terraform state rm proxmox_virtual_environment_vm.web_node
+terraform apply -var="node_count=1" -auto-approve
+```
+
+### "Wrong node showing in Ansible"
+scale.sh rewrites inventory.ini. Check which node is actually running:
+```bash
+ssh proxmox "qm list | grep running"
+```
+Then update inventory manually to match.
+
+---
+
+## Demo sequence for interview
+
+```bash
+# Show current state
+terraform output
+ssh proxmox "qm list"
+
+# Scale up — provision 2, select which runs
+bash scripts/scale.sh 2
+# Pick node 1 when prompted
+
+# Verify node 1 active, node 2 stopped
+ssh proxmox "qm list"
+
+# Run Ansible on active node
+cd ansible
+ansible web_nodes -i inventory.ini -m raw -a "hostname"
+
+# Scale back down
+cd ../terraform
+terraform apply -var="node_count=1" -auto-approve
+
+# Verify cleanup
+ssh proxmox "qm list"
+terraform output
+```
+
+Key talking points:
+- `node_count=N` is the single variable that controls cluster size
+- Terraform only changes what's different — idempotent
+- scale.sh manages the hardware constraint transparently
+- Ansible inventory updates automatically — one command reaches all active nodes

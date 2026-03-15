@@ -1,0 +1,289 @@
+{
+  "version": 4,
+  "terraform_version": "1.14.7",
+  "serial": 49,
+  "lineage": "22188297-e7f9-134f-b3d8-9ddaaefbafc9",
+  "outputs": {
+    "node_count": {
+      "value": 1,
+      "type": "number"
+    },
+    "vm_ips": {
+      "value": {
+        "web-node-1": []
+      },
+      "type": [
+        "object",
+        {
+          "web-node-1": [
+            "list",
+            [
+              "list",
+              "string"
+            ]
+          ]
+        }
+      ]
+    },
+    "web_urls": {
+      "value": [
+        "http://web-node-1"
+      ],
+      "type": [
+        "tuple",
+        [
+          "string"
+        ]
+      ]
+    }
+  },
+  "resources": [
+    {
+      "mode": "managed",
+      "type": "local_file",
+      "name": "ansible_inventory",
+      "provider": "provider[\"registry.terraform.io/hashicorp/local\"]",
+      "instances": [
+        {
+          "schema_version": 0,
+          "attributes": {
+            "content": "[web_nodes]\n[web_nodes:vars]\nansible_python_interpreter=/usr/bin/python3\n",
+            "content_base64": null,
+            "content_base64sha256": "esjZhA1QwkmXN459GzJd563zmMaVHNiTt2b0Rfvtz+U=",
+            "content_base64sha512": "4HkllJGgnEngPj9iOi0BqRWhA433+9F+aRZHgsMyFzJh8PLpmbdb5wNiidH5Xn7A+d1T7Czgpy6NHplsJiSlkg==",
+            "content_md5": "f8ef3cc96c5f2052c25554218a41b6fb",
+            "content_sha1": "071d6d00bbc40f9229867637538826ebe9cf43ff",
+            "content_sha256": "7ac8d9840d50c24997378e7d1b325de7adf398c6951cd893b766f445fbedcfe5",
+            "content_sha512": "e079259491a09c49e03e3f623a2d01a915a1038df7fbd17e69164782c332173261f0f2e999b75be7036289d1f95e7ec0f9dd53ec2ce0a72e8d1e996c2624a592",
+            "directory_permission": "0777",
+            "file_permission": "0777",
+            "filename": "../ansible/inventory.ini",
+            "id": "071d6d00bbc40f9229867637538826ebe9cf43ff",
+            "sensitive_content": null,
+            "source": null
+          },
+          "sensitive_attributes": [
+            [
+              {
+                "type": "get_attr",
+                "value": "content"
+              }
+            ],
+            [
+              {
+                "type": "get_attr",
+                "value": "sensitive_content"
+              }
+            ]
+          ],
+          "identity_schema_version": 0,
+          "dependencies": [
+            "proxmox_virtual_environment_vm.web_node"
+          ]
+        }
+      ]
+    },
+    {
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "name": "web_node",
+      "provider": "provider[\"registry.terraform.io/bpg/proxmox\"]",
+      "instances": [
+        {
+          "index_key": 0,
+          "schema_version": 0,
+          "attributes": {
+            "acpi": true,
+            "agent": [
+              {
+                "enabled": false,
+                "timeout": "15m",
+                "trim": false,
+                "type": "virtio",
+                "wait_for_ip": []
+              }
+            ],
+            "amd_sev": [],
+            "audio_device": [],
+            "bios": "seabios",
+            "boot_order": [
+              "scsi0"
+            ],
+            "cdrom": [],
+            "clone": [
+              {
+                "datastore_id": "",
+                "full": true,
+                "node_name": "",
+                "retries": 1,
+                "vm_id": 9000
+              }
+            ],
+            "cpu": [
+              {
+                "affinity": "",
+                "architecture": "",
+                "cores": 1,
+                "flags": null,
+                "hotplugged": 0,
+                "limit": 0,
+                "numa": false,
+                "sockets": 1,
+                "type": "qemu64",
+                "units": 0
+              }
+            ],
+            "delete_unreferenced_disks_on_destroy": true,
+            "description": null,
+            "disk": [],
+            "efi_disk": [],
+            "hook_script_file_id": null,
+            "hostpci": [],
+            "hotplug": null,
+            "id": "100",
+            "initialization": [
+              {
+                "datastore_id": "local-lvm",
+                "dns": [],
+                "file_format": "",
+                "interface": "ide2",
+                "ip_config": [
+                  {
+                    "ipv4": [
+                      {
+                        "address": "dhcp",
+                        "gateway": ""
+                      }
+                    ],
+                    "ipv6": []
+                  }
+                ],
+                "meta_data_file_id": "",
+                "network_data_file_id": "",
+                "type": "",
+                "user_account": [
+                  {
+                    "keys": [
+                      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAxMjgYsbRayQr62p+Xx/Us/zSOhorFcLB/MYxNgzMzU proxmox-lab"
+                    ],
+                    "password": "",
+                    "username": "alpine"
+                  }
+                ],
+                "user_data_file_id": "",
+                "vendor_data_file_id": ""
+              }
+            ],
+            "ipv4_addresses": [],
+            "ipv6_addresses": [],
+            "keyboard_layout": "en-us",
+            "kvm_arguments": null,
+            "mac_addresses": [
+              "BC:24:11:23:64:66"
+            ],
+            "machine": null,
+            "memory": [
+              {
+                "dedicated": 256,
+                "floating": 0,
+                "hugepages": "",
+                "keep_hugepages": false,
+                "shared": 0
+              }
+            ],
+            "migrate": false,
+            "name": "web-node-1",
+            "network_device": [
+              {
+                "bridge": "vmbr0",
+                "disconnected": false,
+                "enabled": true,
+                "firewall": false,
+                "mac_address": "BC:24:11:23:64:66",
+                "model": "virtio",
+                "mtu": 0,
+                "queues": 0,
+                "rate_limit": 0,
+                "trunks": "",
+                "vlan_id": 0
+              }
+            ],
+            "network_interface_names": [],
+            "node_name": "pve",
+            "numa": [],
+            "on_boot": true,
+            "operating_system": [],
+            "pool_id": "",
+            "protection": false,
+            "purge_on_destroy": true,
+            "reboot": false,
+            "reboot_after_update": true,
+            "rng": [],
+            "scsi_hardware": "virtio-scsi-pci",
+            "serial_device": [],
+            "smbios": [],
+            "started": false,
+            "startup": [],
+            "stop_on_destroy": false,
+            "tablet_device": true,
+            "tags": null,
+            "template": false,
+            "timeout_clone": 1800,
+            "timeout_create": 1800,
+            "timeout_migrate": 1800,
+            "timeout_move_disk": 1800,
+            "timeout_reboot": 1800,
+            "timeout_shutdown_vm": 1800,
+            "timeout_start_vm": 1800,
+            "timeout_stop_vm": 300,
+            "tpm_state": [],
+            "usb": [],
+            "vga": [
+              {
+                "clipboard": "",
+                "memory": 16,
+                "type": "serial0"
+              }
+            ],
+            "virtiofs": [],
+            "vm_id": 100,
+            "watchdog": []
+          },
+          "sensitive_attributes": [
+            [
+              {
+                "type": "get_attr",
+                "value": "initialization"
+              },
+              {
+                "type": "index",
+                "value": {
+                  "value": 0,
+                  "type": "number"
+                }
+              },
+              {
+                "type": "get_attr",
+                "value": "user_account"
+              },
+              {
+                "type": "index",
+                "value": {
+                  "value": 0,
+                  "type": "number"
+                }
+              },
+              {
+                "type": "get_attr",
+                "value": "password"
+              }
+            ]
+          ],
+          "identity_schema_version": 0,
+          "private": "bnVsbA=="
+        }
+      ]
+    }
+  ],
+  "check_results": null
+}

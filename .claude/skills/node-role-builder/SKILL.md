@@ -1,114 +1,159 @@
 ---
 name: node-role-builder
 description: >
-  Scaffolds complete Ansible roles for deploying any service onto nodes in the
-  Proxmox Private Cloud Lab. Use this skill whenever a developer wants to deploy
-  their own application or service to the VMs instead of (or alongside) the default
-  nginx hello world site. Triggers on: "deploy my app", "install X on the nodes",
-  "add a Node.js service", "set up Redis", "configure Postgres", "add a reverse proxy",
-  "deploy a Python app", "run a Docker container on the VMs", "replace the hello world
-  site with my app", or any request to install, configure, or run a custom service
-  on the Proxmox lab nodes. Always use this skill for service deployment — it knows
-  the existing role structure, nginx template, and playbook layout.
+  Scaffolds Ansible roles and tasks for the Proxmox lab nodes. Use when someone wants
+  to deploy a new service or configuration to nodes, create a new Ansible role, add
+  monitoring, manage files or users, or extend the playbook. Triggers on: "add nginx",
+  "deploy X to the nodes", "create a role for Y", "configure Z on all nodes",
+  "add a health check", "set up monitoring", "manage users", "deploy a config file".
+  Critical constraint: ALL tasks must use the raw module — no Python in VMs, no internet.
+  Standard Ansible modules (template, service, package, file, copy) will fail.
+  Alpine Linux uses apk and rc-service, not apt and systemctl.
 ---
 
 # Node Role Builder — Ansible Role Scaffolder
 
-Generates a complete, drop-in Ansible role for any service, matched to the structure
-and conventions of this repo. Output is immediately usable — no further editing needed
-beyond filling in app-specific config values.
+Builds Ansible roles and tasks compatible with this environment's constraints:
+Alpine Linux, no Python, no internet, raw module only.
 
 ---
 
-## What you generate
+## Hard constraints — never violate
 
-For every request, produce:
-
-1. `ansible/roles/{rolename}/tasks/main.yml` — complete task list
-2. `ansible/roles/{rolename}/handlers/main.yml` — restart/reload handlers
-3. `ansible/roles/{rolename}/defaults/main.yml` — configurable variables with sensible defaults
-4. Any templates needed in `ansible/roles/{rolename}/templates/`
-5. The addition to `ansible/playbook.yml` — where to add the role
+1. **Raw module only** — no template, file, copy, service, package, apt, yum modules
+2. **No package installs at runtime** — no internet in VMs; everything must be in golden image
+3. **Alpine service manager** — `rc-service` not `systemctl`; `rc-update add` not `systemctl enable`
+4. **gather_facts: false** — facts require Python, must be disabled
+5. **Single active node** — roles run against one VM at a time (inventory only has active node)
 
 ---
 
-## Reference files
-
-| File | When to read |
-|---|---|
-| `references/role-patterns.md` | Every request — contains full task, handler, and template patterns |
-| `references/service-cookbook.md` | When the service is in the list (Redis, Postgres, Node.js, Docker, etc.) — use the pre-built recipe |
-
----
-
-## Workflow
-
-### Step 1 — Understand the service
-
-Ask only if the answer is not inferable:
-- What port does it listen on?
-- Does it need to be behind nginx (reverse proxy) or serve directly?
-- Should it run on all web nodes or a dedicated VM group?
-- Is there a config file that needs to be templated?
-
-### Step 2 — Check the service cookbook
-
-Read `references/service-cookbook.md`. If the service is listed, use that recipe
-as the base — don't generate from scratch.
-
-### Step 3 — Check for nginx conflict
-
-If the new service also uses port 80 or needs nginx as a reverse proxy, the existing
-`roles/webserver` role must be updated. Read the existing
-`ansible/roles/webserver/templates/nginx.conf.j2` and generate an updated version
-that adds the new `location {}` block without removing the hello world site.
-
-### Step 4 — Generate the role
-
-Follow patterns in `references/role-patterns.md` exactly.
-
-### Step 5 — Show where to add to playbook.yml
-
-Generate the exact play block to append to `ansible/playbook.yml`.
-
----
-
-## Output format
+## Role structure
 
 ```
-## Role: {rolename}
+ansible/roles/{rolename}/
+├── tasks/
+│   └── main.yml     # All tasks using raw module
+└── README.md        # What the role does, how to run it
+```
 
-### ansible/roles/{rolename}/tasks/main.yml
-\```yaml
-[complete file]
-\```
+No `templates/`, `files/`, `vars/`, `handlers/` — those require Python to process.
 
-### ansible/roles/{rolename}/handlers/main.yml
-\```yaml
-[complete file]
-\```
+---
 
-### ansible/roles/{rolename}/defaults/main.yml
-\```yaml
-[complete file]
-\```
+## Role template
 
-### ansible/roles/{rolename}/templates/{file}.j2  (if needed)
-\```
-[complete file]
-\```
+```yaml
+---
+# ansible/roles/{rolename}/tasks/main.yml
 
-### Add to ansible/playbook.yml
-[Exact location — "append this play block at the bottom of playbook.yml"]
-\```yaml
-[play block]
-\```
+- name: "{rolename} - step 1"
+  raw: |
+    # your shell commands here
+    echo "done"
+  tags: {rolename}
 
-## Apply it
-\```bash
-ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
-\```
+- name: "{rolename} - step 2"
+  raw: |
+    # next step
+  tags: {rolename}
+```
 
-## Verify
-[How to confirm the service is running — curl command, log to check, port to test]
+## Playbook entry
+
+```yaml
+# In ansible/playbook.yml, add:
+- name: Apply {rolename}
+  hosts: web_nodes
+  gather_facts: false
+  roles:
+    - {rolename}
+```
+
+---
+
+## Common role patterns
+
+### MOTD banner
+
+```yaml
+- name: motd - deploy banner
+  raw: |
+    printf 'Welcome to Proxmox Lab\nNode: {{ inventory_hostname }}\nManaged by: Ansible + Terraform\nCluster: proxmox-lab\n' > /etc/motd
+  tags: motd
+```
+
+### SSH key management
+
+```yaml
+- name: ssh-keys - ensure authorized_keys exists
+  raw: "mkdir -p /root/.ssh && touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
+  tags: ssh-keys
+
+- name: ssh-keys - add key for user
+  raw: |
+    grep -q 'USER_IDENTIFIER' /root/.ssh/authorized_keys || \
+    echo 'ssh-ed25519 AAAA... user@host' >> /root/.ssh/authorized_keys
+  tags: ssh-keys
+
+- name: ssh-keys - audit keys
+  raw: "echo 'Authorized keys:' && wc -l /root/.ssh/authorized_keys && cat /root/.ssh/authorized_keys | cut -c1-60"
+  tags: ssh-keys
+```
+
+### Asset tracking file
+
+```yaml
+- name: infra-info - deploy tracking file
+  raw: |
+    printf '[node]\nhostname={{ inventory_hostname }}\nip=192.168.1.101\nos=Alpine Linux 3.19\n\n[cluster]\nname=proxmox-lab\nrole=web-node\nproxmox_host=192.168.1.100\n\n[provisioning]\nprovisioned_by=Terraform+Ansible\nlast_configured={{ ansible_date_time.iso8601 | default("unknown") }}\n' > /etc/infra-info
+  tags: infra-info
+```
+
+Since `ansible_date_time` requires facts (Python), use shell date instead:
+```yaml
+- name: infra-info - deploy tracking file
+  raw: |
+    printf '[node]\nhostname={{ inventory_hostname }}\nip=192.168.1.101\nos=Alpine Linux 3.19\n\n[provisioning]\nprovisioned_by=Terraform+Ansible\nlast_configured=' > /etc/infra-info
+    date -u +%Y-%m-%dT%H:%M:%SZ >> /etc/infra-info
+  tags: infra-info
+```
+
+### Health check
+
+```yaml
+- name: health - check services
+  raw: |
+    echo "=== $(hostname) ===" && \
+    echo "Uptime: $(uptime)" && \
+    echo "IP: $(ip addr show eth0 | grep 'inet ' | awk '{print $2}')" && \
+    echo "SSH: $(rc-service sshd status)" && \
+    echo "Keys: $(wc -l /root/.ssh/authorized_keys) authorized keys"
+  tags: health
+```
+
+### Ensure sshd running and enabled
+
+```yaml
+- name: sshd - start and enable
+  raw: |
+    rc-service sshd start 2>/dev/null || true
+    rc-update add sshd default 2>/dev/null || true
+    echo "sshd status: $(rc-service sshd status)"
+  tags: sshd
+```
+
+---
+
+## Run a role
+
+```bash
+# Run specific role via tag
+ansible-playbook -i inventory.ini playbook.yml --tags {rolename}
+
+# Run ad-hoc without a role
+ansible web_nodes -i inventory.ini -m raw -a "your command here"
+
+# Test against active node
+ssh -i ~/.ssh/proxmox-lab root@192.168.1.101 "your command"
 ```

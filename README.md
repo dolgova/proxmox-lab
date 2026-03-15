@@ -1,6 +1,6 @@
 # 🖥️ Proxmox Private Cloud Lab
 
-A fully automated private cloud environment built on **Proxmox VE**, demonstrating Infrastructure as Code, configuration management, autoscaling, and real-time monitoring — all running on a single Windows machine.
+A fully automated private cloud environment built on **Proxmox VE**, demonstrating Infrastructure as Code, configuration management, and autoscaling — running on a single Windows laptop.
 
 > Built as part of a Private Cloud Administrator assessment for Maritime Capital, LLC.
 
@@ -10,750 +10,499 @@ A fully automated private cloud environment built on **Proxmox VE**, demonstrati
 
 - [What This Does](#what-this-does)
 - [Architecture](#architecture)
+- [Resource Constraints & Design Decisions](#resource-constraints--design-decisions)
 - [Tool Selection & Why](#tool-selection--why)
+- [Golden Image Design](#golden-image-design)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Accessing the Hello World Sites](#accessing-the-hello-world-sites)
-- [Monitoring Dashboard](#monitoring-dashboard)
-- [Scaling Nodes](#scaling-nodes)
-- [Autoscaling & Stress Test](#autoscaling--stress-test)
+- [Scaling Nodes — scale.sh](#scaling-nodes--scalesh)
 - [Ansible in Action](#ansible-in-action)
+- [Useful Commands](#useful-commands)
 - [Project Structure](#project-structure)
-- [Troubleshooting](#troubleshooting)
+- [Real-World Issues & Fixes](#real-world-issues--fixes)
+- [Claude Code Skills](#claude-code-skills)
 - [Security Notes](#security-notes)
-- [Contributing](#contributing)
 
 ---
 
 ## What This Does
 
-This lab provisions a mini production-style private cloud entirely on your local machine. Every component is automated — from provisioning VMs to deploying web servers to scaling under load.
+This lab provisions a production-style private cloud on a local Windows machine. Every component is automated — from provisioning VMs to configuration management to autoscaling.
 
 | Capability | Implementation | Details |
 |---|---|---|
-| **Hypervisor** | Proxmox VE 8.x | Runs inside VirtualBox on Windows |
-| **VM Provisioning** | Terraform | Clones Ubuntu VMs via Proxmox REST API |
-| **Configuration** | Ansible | SSH keys, MOTD, nginx, hello world site, metrics agent, asset tracking |
-| **Monitoring** | Custom HTML dashboard | Polls Proxmox API live — no server needed |
-| **Autoscaling** | Bash autoscaler | Scales 1 → 5 nodes based on CPU threshold |
-| **Hello World** | Nginx on each node | Each page shows its own hostname + IP |
+| **Hypervisor** | Proxmox VE 9.1 | Runs inside VirtualBox on Windows 11 |
+| **VM Provisioning** | Terraform (bpg/proxmox) | Clones Alpine VMs via Proxmox REST API |
+| **Configuration** | Ansible (raw module) | SSH keys, MOTD, asset tracking — no Python needed |
+| **Golden Image** | VM 100 (golden-template) | Pre-configured base — all clones inherit SSH, password, sshd |
+| **Scaling** | scripts/scale.sh | Interactive wrapper — prompts for node count and primary instance |
+| **Autoscaling** | autoscale/autoscale.sh | CPU threshold-based, 1–5 nodes |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Your Windows Machine                                        │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  VirtualBox                                            │  │
-│  │                                                        │  │
-│  │  ┌──────────────────────────────────────────────────┐  │  │
-│  │  │  Proxmox VE 8.x  (192.168.1.100:8006)            │  │  │
-│  │  │                                                  │  │  │
-│  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐       │  │  │
-│  │  │  │web-node-1│  │web-node-2│  │web-node-N│  ...  │  │  │
-│  │  │  │:80 nginx │  │:80 nginx │  │:80 nginx │       │  │  │
-│  │  │  │:9100 exp │  │:9100 exp │  │:9100 exp │       │  │  │
-│  │  │  └──────────┘  └──────────┘  └──────────┘       │  │  │
-│  │  └──────────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                              │
-│  WSL2 / Ubuntu                                               │
-│  ├── Terraform   → Proxmox API → creates / destroys VMs      │
-│  ├── Ansible     → SSH into VMs → configures them            │
-│  ├── Autoscaler  → CPU monitor → triggers terraform          │
-│  └── dashboard/index.html → open in any browser              │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Windows 11 Laptop  (192.168.1.76)                                           │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  VirtualBox                                                            │  │
+│  │                                                                        │  │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Proxmox VE 9.1   (192.168.1.100:8006)                           │  │  │
+│  │  │                                                                  │  │  │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │  │  │
+│  │  │  │  VM 100           │  │  VM 101           │  │  VM 102+     │  │  │  │
+│  │  │  │  golden-template  │  │  web-node-1       │  │  web-node-2+ │  │  │  │
+│  │  │  │  (stopped)        │  │  192.168.1.101    │  │  (stopped)   │  │  │  │
+│  │  │  │                   │  │  Alpine 3.19      │  │              │  │  │  │
+│  │  │  │  SSH key ✓        │  │  SSH ✓ running    │  │  cloned from │  │  │  │
+│  │  │  │  root pw ✓        │  │  root pw ✓        │  │  VM 100      │  │  │  │
+│  │  │  │  sshd ✓           │  │  ← ACTIVE NODE    │  │              │  │  │  │
+│  │  │  └──────────────────┘  └──────────────────┘  └──────────────┘  │  │  │
+│  │  └──────────────────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  WSL2 / Ubuntu                                                               │
+│  │                                                                          │
+│  ├─ Terraform ──────────────→  https://192.168.1.100:8006  (Proxmox API)   │
+│  │   terraform apply              provisions/destroys VMs                   │
+│  │   scripts/scale.sh             interactive wrapper                       │
+│  │                                                                          │
+│  ├─ Ansible ───────────────→  ssh root@192.168.1.101  (active VM)          │
+│  │   raw module only              MOTD, SSH keys, infra-info                │
+│  │   no Python needed             works without internet in VM              │
+│  │                                                                          │
+│  └─ autoscale.sh ──────────→  triggers terraform on CPU threshold          │
+│                                                                              │
+│  Network reachability:                                                       │
+│  WSL2      → Proxmox API    (192.168.1.100:8006)  ✅                        │
+│  WSL2      → Active VM SSH  (192.168.1.101:22)    ✅                        │
+│  Active VM → Proxmox host   (192.168.1.100)        ✅                        │
+│  Active VM → Internet       (8.8.8.8)              ❌ (router restriction)   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**What happens when a new node is added:**
-1. Autoscaler (or you manually) triggers `terraform apply -var="node_count=N+1"`
-2. Terraform calls the Proxmox API → clones the Ubuntu cloud-init template (~30s per VM)
-3. Cloud-init configures the VM hostname, SSH key, and networking on first boot
-4. Terraform writes the new VM IP to `ansible/inventory.ini`
-5. Ansible SSHes in → installs nginx, deploys hello world site, starts Prometheus node exporter
-6. Dashboard polls Proxmox API → new node card appears within 5 seconds
+**What happens when you run `bash scripts/scale.sh 2`:**
+1. Terraform calls Proxmox API → clones golden-template (VM 100) for each new node
+2. configure-node.sh runs automatically per VM — disables KVM, removes cloud-init drive
+3. You are prompted to select which instance is the PRIMARY (active)
+4. All other VMs are stopped — only one runs at a time (hardware constraint)
+5. Ansible inventory is updated to point to the active node at `192.168.1.101`
+6. SSH into the active node works immediately — no further setup needed
+
+---
+
+## Resource Constraints & Design Decisions
+
+I built this on my personal laptop which has limited RAM — not a server, not a cloud instance. Working within those limits shaped almost every design decision in this project. I'm documenting them here so the reasoning is clear.
+
+### Constraint 1 — Only One VM Can Run at a Time
+
+My laptop doesn't have enough memory to run multiple VMs simultaneously. Proxmox alone eats about 1.6GB, and each Alpine VM takes another 256MB on top of that. When I tried running two or three at once, Proxmox would become unresponsive or crash entirely.
+
+So I built a wrapper script (`scripts/scale.sh`) that lets me provision any number of VMs via Terraform — they all get created and configured — but only one actually runs at a time. When the script finishes, it asks me which node I want active and stops everything else. The others sit there stopped, ready to swap in whenever I need them.
+
+```
+bash scripts/scale.sh 3
+
+Provisioning 3 node(s) via Terraform...
+...Apply complete! Resources: 3 added.
+
+Which node should be the PRIMARY (running)?
+All others will be STOPPED to save resources
+  1) web-node-1
+  2) web-node-2
+  3) web-node-3
+
+Enter node number [1]: 2
+Starting web-node-2... Done.
+Active: web-node-2 at 192.168.1.101
+```
+
+To swap which VM is active:
+```bash
+ssh proxmox "qm stop 101 && qm start 102"
+# Update ansible/inventory.ini to reflect the new active node
+```
+
+### Constraint 2 — No Internet Access in VMs
+
+My home router doesn't give me access to NAT or port forwarding settings — I can't configure it. Because of this, my VMs get a local IP on the LAN and can talk to the Proxmox host and my laptop, but they can't reach the public internet.
+
+This meant I couldn't install packages inside VMs at runtime. No `apk add nginx`, no `pip install`, nothing that needs to hit a mirror.
+
+I solved this two ways. First, I built a **golden image** — a pre-configured VM with everything already set up (SSH keys, root password, sshd, network config) that I converted into a template. Every new VM Terraform creates is a clone of that template, so it inherits everything and is ready to go the moment it boots.
+
+Second, for Ansible I switched to using the `raw` module instead of the standard modules. The raw module just sends shell commands over SSH — it doesn't need Python installed in the target VM at all. I can still deploy MOTD banners, manage SSH keys, write asset tracking files across all nodes with a single command. It demonstrates the same core capability, just without the runtime dependency.
 
 ---
 
 ## Tool Selection & Why
 
-### Proxmox VE — Hypervisor
-Chosen over VMware ESXi or plain KVM because:
-- **Free** — no licence required for lab or production use
-- **REST API is first-class** — every UI action is also available via API, making full automation straightforward
-- **Cloud-init support built in** — clone a template and a new VM self-configures without manual OS install
-- **Unified interface** for both QEMU/KVM VMs and LXC containers
-- Directly mirrors the tech stack specified in the role
+| Tool | Why I chose it |
+|---|---|
+| **Proxmox VE** | Free, production-grade hypervisor with a full REST API. Every action you take in the UI is also an API call — Terraform can talk directly to it without any middleware |
+| **Terraform (bpg/proxmox)** | Declarative state management — I just say how many nodes I want and Terraform figures out what to create or destroy. I originally used `telmate/proxmox` but hit a known bug on Proxmox 9 and switched to `bpg/proxmox` which works correctly |
+| **Ansible (raw module)** | Agentless and SSH-based. I use the raw module because my VMs don't have internet, so I can't install Python. Raw just sends shell commands over SSH — no agent needed |
+| **Alpine Linux** | Uses ~90MB RAM and boots in 10 seconds. I started with Ubuntu but its cloud-init process was crashing Proxmox on my laptop. Alpine was stable from the first boot |
+| **Golden Image (VM 100)** | Pre-configured template that all new VMs clone from. This was the single biggest improvement — before it I was manually configuring every VM after creation |
+| **scale.sh** | A wrapper I wrote around Terraform that handles the single-active-VM constraint. I don't have to think about it — I just say how many nodes I want and the script handles the rest |
 
-### Terraform — VM Provisioning
-Chosen for VM lifecycle (not Ansible) because:
-- **Declarative** — you describe the desired end state (`node_count = 3`), not the steps
-- **Idempotent** — running `terraform apply` twice with the same vars changes nothing the second time
-- **State tracking** — Terraform knows exactly which VMs it created and destroys only those on scale-down
-- **Plan before apply** — preview a diff of changes before anything is touched
-- The [Telmate Proxmox provider](https://registry.terraform.io/providers/Telmate/proxmox/latest) maps Terraform resources directly to Proxmox VM objects
+---
 
-### Ansible — Configuration Management
-Chosen for what runs *inside* VMs because:
-- **Agentless** — communicates over SSH, no pre-installed daemon required
-- **Idempotent** — re-running a playbook on a healthy node produces zero changes
-- **Roles** — the webserver role applies identically to 1 node or 20
-- Clean division: Terraform owns the VM lifecycle, Ansible owns the OS and application layer
+## Golden Image Design
 
-### Custom HTML Dashboard — Monitoring
-Chosen over Prometheus + Grafana for this lab because:
-- **Zero dependencies** — single `index.html`, open in any browser
-- **Proxmox API** already returns CPU, RAM, disk, and uptime per VM — no separate pipeline needed
-- Immediately presentable without a running server
-- Note: Prometheus node exporter **is** installed on every VM by Ansible (port 9100) — ready to wire into Grafana at production scale
+VM 100 (`golden-template`) is the base for all Terraform-provisioned VMs. It stays stopped permanently — Terraform clones it for each new node, never starts it directly.
 
-### Bash — Autoscaler
-Chosen over Python or Go because:
-- Calls the exact `terraform apply` and `ansible-playbook` commands a human operator would run
-- Simple polling loop with clear decision logic — readable and auditable
-- No additional runtime dependencies beyond what is already installed
+I went through a lot of frustration getting new VMs to a usable state. Every time Terraform created a fresh clone, I had to manually mount the disk, set a root password, write a network config, and enable sshd before I could even SSH in. It was slow and kept breaking.
+
+The golden image pattern fixed all of that. I configured one VM exactly how I wanted it, then converted it to a Proxmox template. Now every clone inherits everything automatically — SSH keys, password, sshd running on boot, static IP config. The moment Terraform creates a new VM and it boots, I can SSH in. No manual steps.
+
+**What's pre-configured in the golden image:**
+- Alpine Linux 3.19
+- Root password set
+- My SSH public key in `/root/.ssh/authorized_keys`
+- sshd running on boot with root login enabled
+- Static network: `192.168.1.101/24`, gateway `192.168.1.1`
+- KVM disabled
+
+**Before vs after:**
+
+```
+Before golden image:                After golden image:
+─────────────────────               ────────────────────
+terraform apply                     terraform apply
+  ↓                                   ↓
+VM created (not bootable)           VM created
+  ↓                                   ↓
+Mount disk manually                 configure-node.sh: set --kvm 0
+  ↓                                   ↓
+Set root password                   qm start
+  ↓                                   ↓
+Configure static IP                 SSH works immediately ✅
+  ↓
+Enable sshd
+  ↓
+Add SSH keys
+  ↓
+SSH works (eventually)
+```
+
+**To rebuild the golden image if needed:**
+```bash
+# 1. Clone from alpine-cloud-template
+ssh proxmox "qm clone 9000 100 --name golden-template --full 1"
+ssh proxmox "qm set 100 --kvm 0 && qm start 100"
+
+# 2. Open Proxmox console → VM 100 → Console, login as root (no password), then:
+ip link set eth0 up
+udhcpc -i eth0
+cat > /etc/network/interfaces << 'EOF'
+auto lo
+iface lo inet loopback
+auto eth0
+iface eth0 inet static
+    address 192.168.1.101
+    netmask 255.255.255.0
+    gateway 192.168.1.1
+EOF
+echo 'root:Alpine2026' | chpasswd
+apk add openssh
+rc-service sshd start
+rc-update add sshd default
+echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+rc-service sshd restart
+
+# 3. Add SSH key from WSL2
+ssh-copy-id -i ~/.ssh/proxmox-lab.pub root@192.168.1.101
+
+# 4. Convert to template
+ssh proxmox "qm stop 100 && qm template 100"
+```
 
 ---
 
 ## Prerequisites
 
-### System Requirements
+- Windows 10/11 (16GB RAM recommended, 8GB minimum)
+- VirtualBox 7.x with Extension Pack
+- WSL2 with Ubuntu
+- Hyper-V **disabled** (required for VirtualBox nested virtualization)
 
-| Requirement | Minimum | Recommended |
-|---|---|---|
-| OS | Windows 10 | Windows 11 |
-| RAM | 12 GB | 16 GB+ |
-| Disk | 50 GB free | 80 GB free |
-| CPU | VT-x / AMD-V enabled | 4+ cores |
+```powershell
+# Disable Hyper-V — run as Administrator, reboot after
+bcdedit /set hypervisorlaunchtype off
 
-**Verify CPU virtualisation is on:**
-Task Manager → Performance → CPU → **Virtualization: Enabled**
-
-If it shows Disabled, reboot into BIOS and enable Intel VT-x or AMD-V.
-
-### Software to Install
-
-| Tool | Download | Notes |
-|---|---|---|
-| VirtualBox 7.x | [virtualbox.org](https://www.virtualbox.org/wiki/Downloads) | Windows hosts package |
-| VirtualBox Extension Pack | Same page | Must match your VirtualBox version |
-| Proxmox VE 8.x ISO | [proxmox.com/en/downloads](https://www.proxmox.com/en/downloads) | Proxmox VE ISO Installer |
-| WSL2 + Ubuntu | `wsl --install` in PowerShell (Admin) | Reboot required |
-| Git | [git-scm.com](https://git-scm.com) | For cloning this repo |
-
-Terraform and Ansible are installed **inside WSL2**, not on Windows.
+# Re-enable WSL2 after the demo
+bcdedit /set hypervisorlaunchtype auto
+# Reboot required
+```
 
 ---
 
 ## Installation
 
-### Step 1 — VirtualBox & Proxmox VM
+### Phase 1 — VirtualBox
 
-1. Install VirtualBox → then install the Extension Pack: **File → Tools → Extension Pack Manager**
-2. Create a new VM with these exact settings:
-
-   | Setting | Value |
-   |---|---|
-   | Name | Proxmox-VE |
-   | Type | Linux / Debian (64-bit) |
-   | RAM | 4096 MB min — 8192 MB recommended |
-   | CPU | 2 cores min — 4 recommended |
-   | Disk | 50 GB, VDI, Dynamically allocated |
-   | Network | **Bridged Adapter** → your active NIC |
-
-3. **Enable nested virtualisation** (VM must be powered off first):
-   ```powershell
-   # PowerShell as Administrator
-   VBoxManage modifyvm "Proxmox-VE" --nested-hw-virt on
-   ```
-   > ⚠️ Without this, VMs inside Proxmox will not boot. This is the most commonly missed step.
-
-4. Attach the ISO: VM Settings → Storage → CD icon → Choose a disk file → select the `.iso`
-
-### Step 2 — Install Proxmox VE
-
-1. Start the VM — boot from ISO → select **Install Proxmox VE (Graphical)**
-2. Accept EULA → select the 50 GB virtual disk
-3. On the Management Network screen set:
-
-   | Field | Value |
-   |---|---|
-   | IP Address | `192.168.1.100/24` (adjust to your subnet) |
-   | Gateway | Your router IP — usually `192.168.1.1` |
-   | DNS | `8.8.8.8` |
-   | Hostname | `pve.local` |
-
-4. Set a strong root password → click **Install** (5–10 minutes)
-5. Remove the ISO → reboot
-6. Verify: open `https://192.168.1.100:8006` in your Windows browser → accept the cert warning → log in as `root`
-
-### Step 3 — WSL2 Setup
-
+1. Download and install VirtualBox 7.x + Extension Pack from https://www.virtualbox.org
+2. Create a VM: Linux / Debian 64-bit / 4GB RAM / 60GB disk / Bridged Adapter
+3. **Critical:** Set Promiscuous Mode to **Allow All** in Network settings
+4. Enable nested virtualization (VM must be off):
 ```powershell
-# PowerShell as Administrator
-wsl --install
-# Reboot, then set a WSL2 username and password when prompted
+& "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" modifyvm "Proxmox-VE" --nested-hw-virt on
 ```
 
-### Step 4 — Clone Repo & Run Init Script
+### Phase 2 — Install Proxmox VE
 
-```bash
-# In WSL2 (Ubuntu terminal)
+1. Download Proxmox VE 9.x ISO from https://www.proxmox.com/en/downloads
+2. Attach ISO to the VM and boot
+3. Install with these network settings:
+   - IP: `192.168.1.100/24`, Gateway: `192.168.1.1`, DNS: `8.8.8.8`
+4. After reboot, remove the ISO and access the UI at `https://192.168.1.100:8006`
 
-# Generate SSH key
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+### Phase 3 — Proxmox Init Script
 
-# Copy key to Proxmox host
-ssh-copy-id root@192.168.1.100
-
-# Clone repo
-git clone https://github.com/YOUR_USERNAME/proxmox-lab.git
-cd proxmox-lab
-
-# Upload and run init script on Proxmox
-scp bash/proxmox-init.sh root@192.168.1.100:/root/
-ssh root@192.168.1.100 'bash /root/proxmox-init.sh'
-```
-
-The init script: fixes APT repos, updates the system, creates the Ubuntu cloud-init template (VM 9000), and creates the Terraform API user + token.
-
-**At the end of the script, save the token — it is only shown once:**
-```
-=========================================
-  TERRAFORM API TOKEN — SAVE THIS OUTPUT
-=========================================
-Full token ID:  terraform@pve!terraform-token
-Token value:    xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-=========================================
-```
-
-Then reboot Proxmox:
-```bash
-ssh root@192.168.1.100 'reboot'
-```
-
-### Step 5 — Install Terraform & Ansible
-
-```bash
-# In WSL2, inside the proxmox-lab directory
-bash scripts/install-deps.sh
-
-# Verify
-terraform --version    # 1.6.x or higher
-ansible --version      # 2.14.x or higher
-```
-
-### Step 6 — Provision VMs with Terraform
-
-```bash
-cd terraform
-
-# Set your API token (replace with your actual value)
-export TF_VAR_proxmox_api_token_secret="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
-# Persist across sessions (optional)
-echo 'export TF_VAR_proxmox_api_token_secret="YOUR_TOKEN"' >> ~/.bashrc
-
-# Download the Proxmox provider
-terraform init
-
-# Preview what will be created (no changes made)
-terraform plan
-
-# Create 1 VM
-terraform apply
-# Type 'yes' when prompted
-```
-
-When complete, Terraform prints the VM IPs:
-```
-Outputs:
-vm_ips  = { "web-node-1" = "192.168.1.101" }
-web_urls = [ "http://192.168.1.101" ]
-```
-
-### Step 7 — Configure VMs with Ansible
-
-Terraform writes `ansible/inventory.ini` automatically. Run the playbook:
-
-```bash
-cd ../ansible
-ansible-playbook -i inventory.ini playbook.yml
-```
-
-Ansible installs on each VM: `nginx` (hello world site on port 80), `prometheus-node-exporter` (metrics on port 9100), and applies SSH hardening.
-
-When the playbook finishes you will see:
-```
-PLAY RECAP
-web-node-1 : ok=12  changed=10  unreachable=0  failed=0
-```
-
----
-
-## Accessing the Hello World Sites
-
-Each VM runs nginx on **port 80**. After Ansible completes, open your Windows browser and navigate to the IP of any node:
-
-```
-http://192.168.1.101     ← web-node-1
-http://192.168.1.102     ← web-node-2
-http://192.168.1.103     ← web-node-3
-```
-
-> Get the IPs any time with: `terraform output` or by reading `ansible/inventory.ini`
-
-**What the page looks like:**
-
-```
-┌────────────────────────────────┐
-│                                │
-│   Hello from                   │
-│                                │
-│        web-node-1              │
-│                                │
-│        192.168.1.101           │
-│                                │
-│   ● Node is running · Proxmox Lab │
-│                                │
-└────────────────────────────────┘
-```
-
-Each node shows its own unique hostname and IP. When you scale to 3 nodes, open three browser tabs — you can confirm each is a distinct VM serving its own page.
-
-**Verify nginx from the terminal:**
-```bash
-# Quick HTTP check from WSL2
-curl http://192.168.1.101
-
-# Check HTTP status code only
-curl -I http://192.168.1.101        # Expect: HTTP/1.1 200 OK
-
-# Check nginx is running across all nodes at once
-ansible web_nodes -i ansible/inventory.ini \
-  -m shell -a "systemctl status nginx --no-pager" --become
-```
-
-**Check the raw Prometheus metrics endpoint on any node:**
-```
-http://192.168.1.101:9100/metrics
-```
-This is what the autoscaler reads to get CPU usage. You can see every system metric in Prometheus format.
-
----
-
-## Monitoring Dashboard
-
-The dashboard is a single self-contained HTML file — no web server, no install.
-
-**Open it:**
 ```bash
 # From WSL2
-explorer.exe dashboard/index.html
-
-# Or in Windows Explorer, navigate to the repo and double-click dashboard/index.html
+scp bash/proxmox-init.sh proxmox:/root/
+ssh proxmox "bash /root/proxmox-init.sh"
+# SAVE the API token printed at the end
 ```
 
----
-
-### Connecting to Live Data
-
-The dashboard opens in **demo mode** with sample data so it can be shown before connecting. To see live data:
-
-1. **Proxmox Host** → `192.168.1.100`
-2. **Port** → `8006` (default, leave as-is)
-3. **Token** → your full token string including the prefix:
-   ```
-   terraform@pve!terraform-token=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-   ```
-4. Click **CONNECT**
-
-The dashboard immediately loads your live nodes and refreshes every 5 seconds.
-
----
-
-### Dashboard Panels Explained
-
-**Summary strip (top row)** — shows aggregate health across all nodes:
-
-| Panel | What It Shows |
-|---|---|
-| **Active Nodes** | VMs currently in `running` state out of 5 max |
-| **Avg CPU** | Average CPU % across all running VMs — this is what the autoscaler watches |
-| **Avg Memory** | Average RAM utilisation across all running VMs |
-| **Uptime (host)** | How long the Proxmox hypervisor has been running |
-
-**Node cards** — one card per VM, updating live every 5 seconds:
-
-| Element | What It Shows |
-|---|---|
-| Name + pulsing dot | VM name and running/stopped status |
-| IP address | The VM's network IP — click to open in new tab |
-| CPU bar | Current CPU % — bar turns amber >60%, red >85% |
-| Memory bar | Used RAM / total RAM |
-| Disk bar | Used disk / total disk |
-| Uptime | How long this specific VM has been running |
-| ↗ Proxmox | Direct link to the Proxmox web UI |
-
-**Bar colour guide:**
-
-| Colour | CPU Range | Meaning |
-|---|---|---|
-| 🔵 Cyan | 0 – 59% | Normal |
-| 🟡 Amber | 60 – 84% | Elevated — watch it |
-| 🔴 Red | 85%+ | High — autoscaler will trigger scale-up |
-
-**Scale controls panel:**
-
-Use the **−** and **+** buttons to set your desired node count, then click **APPLY SCALE**. The panel generates and displays the correct `terraform apply` command — copy it and run it in WSL2.
-
-**Activity log:**
-
-Every event is timestamped at the bottom — connections, scale triggers, errors. New entries appear at the top.
-
----
-
-## Scaling Nodes
-
-### Manual Scaling
-
-All commands run from the `terraform/` directory in WSL2:
+### Phase 4 — WSL2 SSH Setup
 
 ```bash
-cd terraform
+ssh-keygen -t ed25519 -C 'proxmox-lab' -f ~/.ssh/proxmox-lab -N ""
+ssh-copy-id -i ~/.ssh/proxmox-lab.pub root@192.168.1.100
 
-# See what is currently running
-terraform output
+cat >> ~/.ssh/config << 'EOF'
+Host proxmox
+    HostName 192.168.1.100
+    User root
+    IdentityFile ~/.ssh/proxmox-lab
+    StrictHostKeyChecking no
+EOF
 
-# Scale to 2 nodes
-terraform apply -var="node_count=2"
-
-# Scale to 3 nodes
-terraform apply -var="node_count=3"
-
-# Scale to maximum — 5 nodes
-terraform apply -var="node_count=5"
-
-# Scale back down to 1
-terraform apply -var="node_count=1"
-
-# Remove all VMs entirely
-terraform destroy
+ssh proxmox echo "connected"
 ```
 
-**What happens on scale-up:**
-1. Terraform calls Proxmox API → clones the cloud-init template for each new VM
-2. New VMs boot and self-configure (hostname, SSH key, networking) via cloud-init
-3. `ansible/inventory.ini` is updated with the new IPs
-4. Ansible runs on new nodes only — existing nodes are untouched
-5. New node cards appear on the dashboard at next poll cycle (~5s)
-
-**What happens on scale-down:**
-1. Terraform identifies VMs to remove (highest-numbered first)
-2. Calls Proxmox API to gracefully stop and delete those VMs
-3. `ansible/inventory.ini` is updated to remove their entries
-4. Dashboard cards disappear at next poll cycle
-
----
-
-## Autoscaling & Stress Test
-
-The autoscaler watches average CPU across all running nodes and calls `terraform apply` automatically when thresholds are crossed.
-
-### Autoscale Thresholds
-
-| Condition | Action |
-|---|---|
-| Avg CPU **> 70%** | Add 1 node (up to max of 5) |
-| Avg CPU **< 25%** | Remove 1 node (down to min of 1) |
-| After each scale event | 60s cooldown before next decision |
-
-### Running the Autoscaler
+### Phase 5 — Install Terraform & Ansible
 
 ```bash
-cd autoscale
-
-# Start in foreground — see live output (Ctrl+C to stop)
-bash autoscale.sh
-
-# Start in background
-bash autoscale.sh &
-
-# Stop background autoscaler
-kill %1
+bash scripts/install-deps.sh
+terraform version && ansible --version
 ```
 
-**What the autoscaler prints every 15 seconds:**
-```
-[14:22:01] Nodes: 1 active | Avg CPU: 18%  192.168.1.101:18%
-[14:22:16] Nodes: 1 active | Avg CPU: 18%  192.168.1.101:18%
-[14:22:31] CPU within range — no scaling needed
+### Phase 6 — Set Proxmox Password
+
+```bash
+export TF_VAR_proxmox_password="YourProxmoxRootPassword"
+echo 'export TF_VAR_proxmox_password="YourProxmoxRootPassword"' >> ~/.bashrc
 ```
 
-When a scale event fires:
-```
-[14:35:17] ⟳ SCALE CPU 74% > 70% threshold → scaling UP to 2 nodes
-[14:35:47] ✓ Scaled to 2 nodes
+### Phase 7 — Terraform Init
+
+```bash
+cd terraform/
+terraform init
+terraform plan
 ```
 
 ---
 
-### Running the Stress Test
+## Scaling Nodes — scale.sh
 
-The stress test installs the `stress` tool on your nodes and saturates CPU — causing the autoscaler to react and add nodes in real time.
+`scripts/scale.sh` is the **primary interface** for all VM provisioning. Use it instead of calling terraform directly.
 
-**You need two WSL2 terminal windows open:**
-
-**Terminal 1 — start the autoscaler:**
 ```bash
-cd autoscale
-bash autoscale.sh
+# From repo root
+bash scripts/scale.sh <node_count>
+
+bash scripts/scale.sh 1    # provision 1 VM
+bash scripts/scale.sh 2    # provision 2 VMs, pick which one runs
+bash scripts/scale.sh 3    # provision 3 VMs, pick which one runs
 ```
 
-**Terminal 2 — trigger the stress test:**
+**What the script does:**
+1. Runs `terraform apply -var="node_count=N"` to provision N VMs
+2. Stops all running VMs to prevent resource exhaustion
+3. Prompts you to select the PRIMARY (active) instance
+4. Starts only the selected VM
+5. Updates `ansible/inventory.ini` to point to the active node at `192.168.1.101`
+
+**To swap active instance without reprovisioning:**
 ```bash
-cd autoscale
-bash autoscale.sh --stress
+# Stop current node, start a different one
+ssh proxmox "qm stop 101 && qm start 102"
+
+# Manually update Ansible inventory
+cat > ansible/inventory.ini << 'EOF'
+[web_nodes]
+web-node-2 ansible_host=192.168.1.101 ansible_user=root ansible_ssh_private_key_file=~/.ssh/proxmox-lab ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[web_nodes:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
 ```
 
-**Then open your browser to the dashboard** and watch nodes appear as CPU climbs.
-
----
-
-### What to Expect During the Stress Test
-
+**Scale back down:**
+```bash
+cd terraform/
+terraform apply -var="node_count=1" -auto-approve
+# Terraform destroys highest-numbered nodes, keeps node 1
 ```
-Time 0:00  — 1 node running, CPU ~5%
-             Stress tool installed and started on node-1
-Time 0:30  — CPU climbs to ~85% on node-1
-             Autoscaler detects avg > 70%
-Time 1:00  — web-node-2 appears on dashboard
-             CPU load is now split: node-1 ~50%, node-2 ~50%
-Time 1:30  — If still >70%, node-3 is provisioned
-             ...continues until CPU drops below 70% or 5 nodes reached
-Time 5:00  — stress tool stops (300s timeout)
-             CPU drops back below 25%
-Time 5:60  — Cooldown expires, autoscaler begins scaling down
-             Nodes removed one at a time until back to 1
-```
-
-**Watch the hello world sites during the test:**
-
-Open a browser tab for each node IP as they come online:
-```
-http://192.168.1.101   ← node-1 (running before test starts)
-http://192.168.1.102   ← node-2 (appears ~1 min into test)
-http://192.168.1.103   ← node-3 (appears if load stays high)
-```
-
-Each page appears when its node finishes provisioning and Ansible has deployed nginx — roughly 90 seconds from the scale event.
 
 ---
 
 ## Ansible in Action
 
-Ansible manages everything that runs *inside* each VM — packages, config files, SSH keys, services, and the login experience. All tasks are **idempotent**: re-running the playbook on a healthy node produces zero changes.
+All Ansible demos use the `raw` module — no Python installation required in the target VM. This is the right choice for an Alpine environment without internet access.
 
-### What Ansible configures on every node
-
-| What | How | Where to see it |
-|---|---|---|
-| nginx + hello world site | Jinja2 template → `/var/www/html/index.html` | `http://192.168.1.101` |
-| SSH authorized keys | `authorized_key` module from central key files | `~/.ssh/authorized_keys` |
-| Dynamic MOTD banner | Jinja2 template → `/etc/update-motd.d/01-proxmox-lab` | SSH into any node |
-| Asset tracking file | Jinja2 template → `/etc/infra-info` | `cat /etc/infra-info` |
-| Prometheus node exporter | Binary install + systemd unit | `http://192.168.1.101:9100/metrics` |
-| SSH hardening | `lineinfile` on `/etc/ssh/sshd_config` | `sshd -T \| grep PermitRoot` |
-
----
-
-### Demo 1 — The MOTD (Message of the Day)
-
-Every node shows a live banner the moment you SSH in. The banner is rendered by a Jinja2 template — each node's hostname, IP, role, and service status are injected at deploy time.
+### Test connectivity
 
 ```bash
-# SSH into any node
-ssh ubuntu@192.168.1.101
+cd ansible/
+ansible web_nodes -i inventory.ini -m raw -a "hostname"
+
+# Expected output:
+# web-node-1 | CHANGED | rc=0 >>
+# localhost
 ```
 
-You'll see something like:
+### Demo 1 — Deploy MOTD (Message of the Day)
 
-```
-  ██████╗ ██████╗  ██████╗ ██╗  ██╗███╗   ███╗ ██████╗ ██╗  ██╗
-  ...
-                     Private Cloud Lab
-
-  ┌─────────────────────────────────────────────────┐
-  │  Node       : web-node-1                        │
-  │  IP Address : 192.168.1.101                     │
-  │  Cluster    : proxmox-lab                       │
-  │  Role       : web-node (primary)                │
-  │  Managed by : Ansible / Terraform               │
-  │  Proxmox    : 192.168.1.100                     │
-  └─────────────────────────────────────────────────┘
-
-  System
-  ──────────────────────────────────────────────────
-  Uptime  : 2 hours, 14 minutes
-  Load    : 0.08
-  Memory  : 23% used
-  Disk    : 2.1G/9.6G (22% used)
-
-  Services
-  ──────────────────────────────────────────────────
-  ✓  nginx
-  ✓  node_exporter
-
-  ⚠  This system is managed by Ansible. Manual changes will be overwritten.
-```
-
-**Deploy or refresh the MOTD:**
 ```bash
-cd ansible
-
-# Deploy to all nodes
-ansible-playbook -i inventory.ini playbook.yml --tags motd
-
-# Deploy to one node
-ansible-playbook -i inventory.ini playbook.yml --tags motd --limit web-node-1
-
-# Preview what the MOTD outputs without SSHing in
-ansible web_nodes -i inventory.ini \
-  -m shell -a "/etc/update-motd.d/01-proxmox-lab" --become
+ansible web_nodes -i inventory.ini -m raw -a "
+printf 'Welcome to Proxmox Lab\nNode: web-node-1\nIP: 192.168.1.101\nManaged by: Ansible + Terraform\nCluster: Maritime Capital Lab\n' > /etc/motd
+cat /etc/motd
+"
 ```
 
----
+Verify — SSH into the node and the MOTD appears automatically:
+```bash
+ssh -i ~/.ssh/proxmox-lab root@192.168.1.101
+# Banner appears on login
+```
 
 ### Demo 2 — SSH Key Management
 
-Authorized keys are managed from a single source of truth: `group_vars/all.yml`. One playbook run distributes or revokes keys across every node simultaneously.
+```bash
+# Audit current authorized keys across all nodes
+ansible web_nodes -i inventory.ini -m raw -a "
+echo '=== Authorized Keys ===' && wc -l /root/.ssh/authorized_keys && cat /root/.ssh/authorized_keys | cut -c1-40
+"
 
-```
-ansible/
-├── group_vars/
-│   └── all.yml                      ← central key list lives here
-└── roles/
-    └── ssh-keys/
-        └── files/
-            └── keys/
-                ├── admin.pub        ← one file per person/service
-                └── deploy-bot.pub
+# Add a new key to all nodes at once
+ansible web_nodes -i inventory.ini -m raw -a "
+echo 'ssh-ed25519 AAAA...newkey user@host' >> /root/.ssh/authorized_keys
+echo 'Key added. Total keys:' && wc -l /root/.ssh/authorized_keys
+"
+
+# Remove a key from all nodes (by comment/identifier)
+ansible web_nodes -i inventory.ini -m raw -a "
+sed -i '/olduser@host/d' /root/.ssh/authorized_keys
+echo 'Key removed. Remaining keys:' && wc -l /root/.ssh/authorized_keys
+"
 ```
 
-#### Add a new key
+### Demo 3 — Asset Tracking File (/etc/infra-info)
 
 ```bash
-# 1. Put the public key file in the keys directory
-cp ~/.ssh/id_rsa.pub ansible/roles/ssh-keys/files/keys/yourname.pub
-
-# 2. Register it in group_vars/all.yml
-#    Under ssh_authorized_keys:, add:
-#      - yourname.pub
-
-# 3. Push to all nodes
-ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --tags ssh-keys
+ansible web_nodes -i inventory.ini -m raw -a "
+printf '[node]\nhostname = web-node-1\nip_address = 192.168.1.101\nos = Alpine Linux 3.19\n\n[cluster]\nname = proxmox-lab\nrole = web-node\nproxmox_host = 192.168.1.100\n\n[provisioning]\nprovisioned_by = Terraform + Ansible\nlast_configured = \$(date -u +%Y-%m-%dT%H:%M:%SZ)\n' > /etc/infra-info
+cat /etc/infra-info
+"
 ```
 
-Ansible output shows exactly which nodes were updated:
-```
-TASK [Add authorized keys from key files] ****
-changed: [web-node-1] => (item=yourname.pub)
-changed: [web-node-2] => (item=yourname.pub)
-```
-
-#### Revoke a key
+### Run all three demos at once
 
 ```bash
-# 1. Remove the filename from ssh_authorized_keys in group_vars/all.yml
-# 2. Add the full key string to ssh_revoked_keys:
-#      ssh_revoked_keys:
-#        - "ssh-rsa AAAA... oldkey@laptop"
-# 3. Push revocation to all nodes
-ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --tags ssh-keys
-```
-
-#### Audit who can access what
-
-```bash
-# List authorized keys on every node
-ansible web_nodes -i ansible/inventory.ini \
-  -m shell -a "cat /home/ubuntu/.ssh/authorized_keys" --become
-
-# Count keys per node
-ansible web_nodes -i ansible/inventory.ini \
-  -m shell -a "wc -l /home/ubuntu/.ssh/authorized_keys" --become
+ansible web_nodes -i inventory.ini -m raw -a "
+printf 'Welcome to Proxmox Lab\nManaged by: Ansible + Terraform\n' > /etc/motd
+printf '[node]\nhostname=web-node-1\nip=192.168.1.101\nmanaged_by=Ansible\nlast_run=\$(date -u)\n' > /etc/infra-info
+echo 'All demos deployed successfully'
+cat /etc/motd
+echo '---'
+cat /etc/infra-info
+"
 ```
 
 ---
 
-### Demo 3 — /etc/infra-info (Asset Tracking File)
+## Useful Commands
 
-Ansible drops a structured info file on every node at `/etc/infra-info`. This is a real ops pattern — it gives you a quick way to confirm provisioning state, last-configured timestamp, and cluster membership from any shell.
-
-```bash
-# Read the file on all nodes simultaneously
-ansible web_nodes -i ansible/inventory.ini \
-  -m shell -a "cat /etc/infra-info" --become
-```
-
-Sample output (per node):
-```ini
-[node]
-hostname     = web-node-1
-ip_address   = 192.168.1.101
-os           = Ubuntu 22.04
-cpu_cores    = 1
-ram_mb       = 512
-
-[cluster]
-name         = proxmox-lab
-role         = web-node (primary)
-proxmox_host = 192.168.1.100
-
-[provisioning]
-provisioned_by  = Terraform + Ansible
-last_configured = 2026-03-13T14:22:01Z
-
-[access]
-ssh_user        = ubuntu
-auth_method     = key-only (password auth disabled)
-authorized_keys = managed by Ansible (ansible/roles/ssh-keys)
-```
+### Scaling (primary interface)
 
 ```bash
-# Check last_configured timestamp across all nodes (quick drift detection)
-ansible web_nodes -i ansible/inventory.ini \
-  -m shell -a "grep last_configured /etc/infra-info" --become
+# Provision and select active node
+bash scripts/scale.sh 1
+bash scripts/scale.sh 2
+bash scripts/scale.sh 3
 ```
 
----
-
-### Core Playbook Commands
+### Terraform
 
 ```bash
-cd ansible
+cd terraform/
 
-# Full run — configure all nodes
-ansible-playbook -i inventory.ini playbook.yml
-
-# Dry run — preview changes without touching anything
-ansible-playbook -i inventory.ini playbook.yml --check
-
-# Single node only
-ansible-playbook -i inventory.ini playbook.yml --limit web-node-2
-
-# Run specific task group only
-ansible-playbook -i inventory.ini playbook.yml --tags ssh-keys
-ansible-playbook -i inventory.ini playbook.yml --tags motd
-
-# Quick connectivity check
-ansible web_nodes -i inventory.ini -m ping
+terraform plan                                          # preview changes
+terraform apply -auto-approve                           # apply
+terraform apply -var="node_count=2" -auto-approve       # scale to 2
+terraform apply -var="node_count=1" -auto-approve       # scale back to 1
+terraform output                                        # show current state
+terraform destroy -auto-approve                         # destroy ALL VMs
+terraform state rm proxmox_virtual_environment_vm.web_node   # clear state
+terraform import proxmox_virtual_environment_vm.web_node[0] pve/101  # import
 ```
 
-For the full ad-hoc command reference, see [`ansible/ops/runbook.md`](ansible/ops/runbook.md).
+### Proxmox VM Management
+
+```bash
+ssh proxmox "qm list"                             # list all VMs and status
+ssh proxmox "qm status 101"                       # check specific VM
+ssh proxmox "qm start 101"                        # start VM
+ssh proxmox "qm stop 101"                         # stop VM
+ssh proxmox "qm destroy 101"                      # delete VM permanently
+ssh proxmox "qm config 101"                       # show full VM config
+ssh proxmox "qm set 101 --kvm 0"                  # disable KVM on VM
+ssh proxmox "qm listsnapshot 100"                 # list snapshots of golden template
+ssh proxmox "ip neigh show | grep -v FAILED"      # show LAN devices and IPs
+```
+
+### SSH into active VM
+
+```bash
+ssh -i ~/.ssh/proxmox-lab root@192.168.1.101
+```
+
+### Ansible
+
+```bash
+cd ansible/
+
+# Connectivity check
+ansible web_nodes -i inventory.ini -m raw -a "hostname"
+
+# Quick health checks
+ansible web_nodes -i inventory.ini -m raw -a "uptime"
+ansible web_nodes -i inventory.ini -m raw -a "ip addr show eth0 | grep inet"
+ansible web_nodes -i inventory.ini -m raw -a "cat /etc/motd"
+ansible web_nodes -i inventory.ini -m raw -a "cat /etc/infra-info"
+ansible web_nodes -i inventory.ini -m raw -a "wc -l /root/.ssh/authorized_keys"
+```
+
+### Proxmox API
+
+```bash
+# Test API is up
+curl -sk https://192.168.1.100:8006/api2/json/version
+
+# Test credentials
+curl -sk -d "username=root@pam&password=YOUR_PASSWORD" \
+  https://192.168.1.100:8006/api2/json/access/ticket | python3 -m json.tool | head -5
+```
 
 ---
 
@@ -765,149 +514,189 @@ proxmox-lab/
 ├── README.md
 ├── CHANGELOG.md
 ├── CLAUDE.md                            # Claude Code context + skill auto-load
-├── LICENSE
 ├── .gitignore
 │
 ├── bash/
-│   └── proxmox-init.sh                 # Run once on Proxmox after install
-│                                       # Repos, cloud-init template, API token
+│   └── proxmox-init.sh                 # Run ONCE on Proxmox after install
+│                                       # Fixes repos, creates cloud-init template,
+│                                       # generates Terraform API token
 │
 ├── terraform/
-│   ├── main.tf                         # VM provisioning via Proxmox API
-│   ├── variables.tf                    # All config: count, CPU, RAM, disk, IPs
-│   ├── outputs.tf                      # Post-apply VM IPs and URLs
-│   ├── inventory.tpl                   # Template → ansible/inventory.ini
-│   └── terraform.tfvars.example
+│   ├── main.tf                         # VM provisioning — bpg/proxmox provider
+│   │                                   # Clones from VM 100 (golden-template)
+│   │                                   # Calls configure-node.sh via local-exec
+│   ├── variables.tf                    # node_count, memory, CPU, SSH key path
+│   ├── outputs.tf                      # node_count, vm_ips, web_urls
+│   └── inventory.tpl                   # Template for ansible/inventory.ini
 │
 ├── ansible/
-│   ├── playbook.yml                    # Main playbook — full node configuration
-│   ├── inventory.ini.example           # Format reference (actual file gitignored)
-│   │
+│   ├── playbook.yml                    # Full playbook (use raw module offline)
+│   ├── inventory.ini                   # AUTO-GENERATED by scale.sh
+│   │                                   # Points to active node at 192.168.1.101
 │   ├── group_vars/
-│   │   └── all.yml                     # Shared variables: SSH key list, MOTD config
-│   │
-│   ├── host_vars/
-│   │   └── web-node-1.yml.example      # Per-node overrides example
-│   │
+│   │   └── all.yml                     # SSH key list, cluster config
 │   ├── roles/
-│   │   ├── webserver/
-│   │   │   └── templates/
-│   │   │       ├── index.html.j2       # Hello world page (hostname + IP per node)
-│   │   │       └── nginx.conf.j2       # Nginx site config
-│   │   │
-│   │   ├── motd/
-│   │   │   ├── tasks/main.yml          # MOTD deploy tasks
-│   │   │   ├── defaults/main.yml       # Cluster name, role, proxmox host
-│   │   │   └── templates/
-│   │   │       ├── motd.j2             # SSH login banner (Jinja2, per-node values)
-│   │   │       └── infra-info.j2       # /etc/infra-info asset tracking file
-│   │   │
-│   │   └── ssh-keys/
-│   │       ├── tasks/main.yml          # Key add/revoke/audit tasks
-│   │       ├── defaults/main.yml       # ssh_authorized_keys, ssh_revoked_keys
-│   │       ├── templates/
-│   │       │   └── known_hosts.j2      # Intra-cluster known_hosts
-│   │       └── files/keys/
-│   │           ├── admin.pub.example   # Drop .pub files here
-│   │           └── deploy-bot.pub.example
-│   │
+│   │   ├── motd/                       # MOTD banner role
+│   │   ├── ssh-keys/                   # SSH key management role
+│   │   └── webserver/                  # nginx + node_exporter (requires internet)
 │   └── ops/
-│       └── runbook.md                  # Day-to-day Ansible command reference
-│
-├── dashboard/
-│   └── index.html                      # Browser monitoring UI — no server needed
-│
-├── autoscale/
-│   └── autoscale.sh                    # CPU autoscaler (--stress for demo)
+│       └── runbook.md                  # Day-to-day command reference
 │
 ├── scripts/
+│   ├── scale.sh                        # ← PRIMARY INTERFACE — use this daily
+│   │                                   # Wraps terraform with single-VM logic
+│   │                                   # Prompts for node count + primary selection
+│   ├── configure-node.sh               # Called by Terraform per VM
+│   │                                   # Sets --kvm 0, removes cloud-init drive
+│   ├── start-nodes.sh                  # Start multiple nodes (batch helper)
 │   └── install-deps.sh                 # Install Terraform + Ansible in WSL2
+│
+├── autoscale/
+│   └── autoscale.sh                    # CPU autoscaler (--stress flag for demo)
 │
 ├── docs/
 │   ├── writeup.md                      # Assessment writeup
-│   └── claude-code-skills-guide.md     # Claude Code install + skills usage guide
+│   └── claude-code-skills-guide.md     # Claude Code install + usage guide
 │
-├── .claude/
-│   └── skills/                         # Claude Code skills (proxmox-iac, debug, etc.)
-│
-└── .github/
-    ├── workflows/validate.yml          # CI: terraform validate, ansible-lint, shellcheck
-    └── pull_request_template.md
+└── .claude/
+    └── skills/                         # Claude Code skills (4 skills)
 ```
 
 ---
 
-## Troubleshooting
+## Real-World Issues & Fixes
 
-### Proxmox web UI unreachable after install
-- VirtualBox network adapter must be **Bridged**, not NAT
-- From WSL2: `ping 192.168.1.100` — if no reply, check the VM is running in VirtualBox
-- Confirm the IP you set during install matches what you are browsing to
+These are the actual problems I ran into during setup — not theoretical. I hit every one of them and had to work through each fix.
 
-### VMs inside Proxmox won't boot
-- Nested virtualisation is not enabled — the VM must be powered off first:
-  ```powershell
-  VBoxManage modifyvm "Proxmox-VE" --nested-hw-virt on
-  ```
+### 1 — Hyper-V Conflicts with VirtualBox
+WSL2 uses Hyper-V under the hood, which takes exclusive control of CPU virtualization. VirtualBox falls back to software emulation and logs `Snail execution mode is active`. Everything becomes extremely slow and Proxmox crashes randomly under any real load.
 
-### `terraform apply` fails with 401 Unauthorized
-- Token not set: `export TF_VAR_proxmox_api_token_secret="your-token"`
-- Wrong token — re-run `proxmox-init.sh` to generate a new one
-- Wrong Proxmox IP in `variables.tf` — update `proxmox_api_url`
+I disabled Hyper-V, rebooted, and VirtualBox got full hardware access back.
+```powershell
+bcdedit /set hypervisorlaunchtype off
+# reboot
+```
+To restore WSL2 after the demo: `bcdedit /set hypervisorlaunchtype auto` and reboot.
 
-### `terraform apply` fails with 500 / connection refused
-- Proxmox is still rebooting after the init script — wait 60 seconds and retry
+### 2 — KVM Not Available Inside VirtualBox
+Even after disabling Hyper-V, Proxmox VMs default to KVM mode which VirtualBox can't provide. Every VM start failed with `KVM virtualisation configured, but not available`.
 
-### Ansible: SSH connection refused or timeout
-- VM is still booting — wait 60–90 seconds after `terraform apply` finishes, then retry
-- SSH key not copied: `ssh-copy-id root@192.168.1.100`
-- Check the VM console in the Proxmox web UI (click the VM → Console) to see if cloud-init has finished
+Fix is to disable KVM on each VM before starting it. I wired this into `configure-node.sh` so it happens automatically now.
 
-### Dashboard shows no data after connecting
-- Token format must include the prefix: `terraform@pve!terraform-token=YOUR_TOKEN`
-- CORS restriction — browser-based API calls to Proxmox may be blocked when accessing from a different machine. Access the dashboard from the same machine, or add a reverse proxy on the Proxmox host:
-  ```bash
-  # Quick workaround on the Proxmox host
-  apt install nginx
-  # configure nginx to proxy https://localhost:8006 with CORS headers
-  ```
+### 3 — Promiscuous Mode Blocking VM Traffic
+My VMs were getting DHCP leases but had 100% packet loss to everything — including the gateway right next to them. Took a while to track down. The VirtualBox bridged adapter was set to `Promiscuous Mode: Deny`, which silently drops all traffic from MAC addresses it doesn't own.
 
-### Autoscaler shows "No nodes found in inventory"
-- Run `terraform apply` first to provision at least one node and generate the inventory file
+Fix: VirtualBox → Proxmox-VE VM → Settings → Network → Promiscuous Mode → **Allow All**
 
-### Hello world site returns 502 or connection refused
-- nginx may not have started: `ansible web_nodes -i ansible/inventory.ini -m service -a "name=nginx state=started" --become`
-- Check if the VM's IP is reachable: `ping 192.168.1.101`
+### 4 — Ubuntu Cloud-Init Crashes Proxmox
+I originally used Ubuntu 22.04 cloud images. On first boot, cloud-init hammers the CPU at 100%+ for several minutes under software emulation. Proxmox would either crash or the VM would reboot in a loop before finishing.
+
+I switched to Alpine Linux. It boots in about 10 seconds and uses 90MB RAM instead of 512MB — stable from the first attempt.
+
+### 5 — telmate/proxmox Provider Bug on Proxmox 9
+The original Terraform provider I was using (`telmate/proxmox` v2.9) kept throwing `VM.Monitor permission missing` errors even after I assigned the Administrator role. I spent a long time debugging ACLs before finding out it's a known upstream bug that's never been fixed in that branch.
+
+Switched to `bpg/proxmox` v0.78+ which handles Proxmox 9 correctly.
+
+### 6 — Enterprise Repo 401 Errors
+Fresh Proxmox install came with enterprise repos enabled by default. My init script was supposed to comment them out but Proxmox 9 switched to a `.sources` file format instead of `.list`, so my `sed` commands had no effect and `apt update` kept failing.
+
+```bash
+echo 'Enabled: no' >> /etc/apt/sources.list.d/pve-enterprise.sources
+echo 'Enabled: no' >> /etc/apt/sources.list.d/ceph.sources
+```
+
+### 7 — pveproxy Crashed After CORS Config
+I tried adding CORS headers to the Proxmox proxy so the dashboard could connect. The config got appended twice in the wrong format, pveproxy went into a restart loop, and the entire web UI and API went down.
+
+Fix: clear the file completely and restart.
+```bash
+echo '' > /etc/default/pveproxy && systemctl start pveproxy
+```
+
+### 8 — No Internet in VMs
+My home router doesn't give me access to the NAT or port forwarding configuration. VMs get a LAN IP and can reach my laptop and the Proxmox host fine, but they can't reach the internet. `apk add` always fails.
+
+The golden image approach solved it — everything the VMs need is pre-baked before cloning. For Ansible, I use the raw module which only needs SSH. No packages to install.
+
+---
+
+## Claude Code Skills
+
+This repo ships with four Claude Code skills in `.claude/skills/`. If you use Claude Code
+to work on this project, these skills load automatically and give Claude full context about
+the environment — the constraints, the provider quirks, the Alpine-specific commands, all of it.
+
+### Skill structure on GitHub
+
+```
+.claude/
+└── skills/
+    ├── proxmox-iac/              # Infrastructure Generator
+    │   ├── SKILL.md
+    │   └── references/
+    │       ├── environment.md    # single source of truth for all env values
+    │       ├── terraform-patterns.md
+    │       └── ansible-patterns.md
+    ├── proxmox-debug/            # Error Diagnostics
+    │   └── SKILL.md
+    ├── node-role-builder/        # Ansible Role Scaffolder
+    │   └── SKILL.md
+    └── scale-policy-editor/      # Scaling Config
+        └── SKILL.md
+```
+
+Each skill folder name is its unique identifier. CLAUDE.md at the repo root tells Claude Code
+to auto-load all four when you open the project.
+
+### Demo — what this looks like in practice
+
+**Without skills:**
+```
+You: add a new Ansible task that deploys a welcome file to all nodes
+Claude: Here's how to do it with the template module...
+        [generates code that requires Python — won't work in this env]
+```
+
+**With skills:**
+```
+You: add a new Ansible task that deploys a welcome file to all nodes
+Claude: [reads proxmox-iac/SKILL.md → sees "raw module only, no Python in VMs"]
+        [reads references/ansible-patterns.md → sees exact patterns for this env]
+
+        Here's the task using the raw module (required — no Python in these VMs):
+
+        - name: deploy welcome file
+          raw: "echo 'Welcome to Proxmox Lab' > /etc/welcome"
+          tags: welcome
+
+        Add it to ansible/playbook.yml and run:
+        ansible web_nodes -i inventory.ini -m raw -a "cat /etc/welcome"
+```
+
+**Debugging example:**
+
+```
+You: getting this error — "KVM virtualisation configured, but not available"
+Claude: [reads proxmox-debug/SKILL.md → finds this exact error in known issues table]
+
+        Root cause: Proxmox VMs default to KVM mode but VirtualBox can't provide it.
+
+        Fix:
+        ssh proxmox "qm set 101 --kvm 0 && qm start 101"
+
+        This is now handled automatically by configure-node.sh for all new VMs.
+```
+
+The skills essentially give Claude Code a full picture of this specific environment —
+the same context that took days of troubleshooting to accumulate — available instantly
+on every future conversation.
 
 ---
 
 ## Security Notes
 
-This is a **lab environment** — several settings are intentionally simplified for ease of setup:
-
-- Proxmox uses a self-signed TLS certificate (`pm_tls_insecure = true` in Terraform is expected)
-- The VM default password (`ubuntu123`) is set in `proxmox-init.sh` — change this before any non-lab deployment
-- The Terraform API token is stored in an environment variable — use HashiCorp Vault or a secrets manager in production
-- SSH password authentication is disabled by the Ansible playbook after first run (key-only)
-- The Terraform API user has least-privilege permissions — it can only manage VMs, not the Proxmox host itself
-
----
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-change`
-3. Make your changes
-4. Validate before pushing:
-   ```bash
-   cd terraform && terraform fmt && terraform validate
-   cd ../ansible && ansible-playbook --syntax-check -i inventory.ini.example playbook.yml
-   shellcheck bash/proxmox-init.sh autoscale/autoscale.sh scripts/install-deps.sh
-   ```
-5. Submit a pull request — the PR template will guide you through what to include
-
----
-
-## License
-
-MIT — free to use, modify, and distribute.
+- Root password auth is used for the demo — production would use API tokens with least-privilege roles and SSH key auth only
+- SSH key auth is the only method for VM access (golden image injects the key)
+- Terraform password stored as env var `TF_VAR_proxmox_password` — never in committed files
+- `.gitignore` excludes: `terraform.tfvars`, `*.tfstate*`, `ansible/inventory.ini`, SSH keys, `.env`

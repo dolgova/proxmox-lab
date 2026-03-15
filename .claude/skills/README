@@ -1,0 +1,25 @@
+# Proxmox Lab — Claude Code Skills
+
+Custom skills for managing the Proxmox Private Cloud Lab infrastructure.
+
+## Skills
+
+| Skill | Purpose |
+|---|---|
+| `proxmox-iac` | Generate Terraform + Ansible code for this environment |
+| `node-role-builder` | Scaffold Ansible roles (raw module, Alpine constraints) |
+| `proxmox-debug` | Diagnose and fix Terraform, Ansible, SSH, and Proxmox errors |
+| `scale-policy-editor` | Manage scaling config and scale.sh wrapper script |
+
+## Installation
+
+Copy `.skill` files to your Claude Code skills directory, or extract the
+skill folders into `.claude/skills/`.
+
+## Environment Summary
+
+- Proxmox VE 9.x running in VirtualBox on a single laptop
+- Alpine Linux 3.19 VMs — no Python, no internet
+- Only ONE VM runs at a time (7.7 GB RAM constraint)
+- Terraform: `bpg/proxmox` provider (not telmate)
+- Ansible: `raw` module only (no standard modules)

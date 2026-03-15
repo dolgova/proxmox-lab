@@ -4,7 +4,7 @@ A fully automated private cloud environment built on **Proxmox VE**, demonstrati
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [What This Does](#what-this-does)
 - [Architecture](#architecture)
@@ -39,35 +39,47 @@ This lab provisions a production-style private cloud on a local Windows machine.
 ---
 
 ## Architecture
-+-------------------------------------------------------------------+
-|  Windows 11 Laptop (192.168.1.76)                                 |
-|                                                                   |
-|  +-------------------------------------------------------------+  |
-|  |  VirtualBox > Proxmox VE 9.1 (192.168.1.100:8006)          |  |
-|  |                                                             |  |
-|  |  +----------------+  +----------------+  +----------------+ |  |
-|  |  | VM 100         |  | VM 101         |  | VM 102+        | |  |
-|  |  | golden-template|  | web-node-1     |  | web-node-2+    | |  |
-|  |  | (stopped)      |  | ACTIVE         |  | (stopped)      | |  |
-|  |  | Alpine 3.19    |  | 192.168.1.101  |  | cloned from    | |  |
-|  |  | base image     |  | cloned from    |  | VM 100         | |  |
-|  |  |                |  | VM 100         |  |                | |  |
-|  |  +----------------+  +----------------+  +----------------+ |  |
-|  +-------------------------------------------------------------+  |
-|                                                                   |
-|  +-------------------------------------------------------------+  |
-|  |  WSL2 / Ubuntu                                              |  |
-|  |                                                             |  |
-|  |  Terraform ----> Proxmox API    provisions/destroys VMs     |  |
-|  |  Ansible ------> Active VM SSH  raw module, no Python       |  |
-|  |  scale.sh -----> Terraform      enforces one VM at a time   |  |
-|  |  autoscale.sh -> scale.sh       triggers on CPU threshold   |  |
-|  +-------------------------------------------------------------+  |
-|                                                                   |
-|  Network:                                                         |
-|  WSL2 -> Proxmox API (8006)  OK     VM -> Proxmox host  OK       |
-|  WSL2 -> Active VM SSH (22)  OK     VM -> Internet       BLOCKED  |
-+-------------------------------------------------------------------+
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Windows 11 Laptop  (192.168.1.76)                                           │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  VirtualBox                                                            │  │
+│  │                                                                        │  │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Proxmox VE 9.1   (192.168.1.100:8006)                           │  │  │
+│  │  │                                                                  │  │  │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │  │  │
+│  │  │  │  VM 100           │  │  VM 101           │  │  VM 102+     │  │  │  │
+│  │  │  │  golden-template  │  │  web-node-1       │  │  web-node-2+ │  │  │  │
+│  │  │  │  (stopped)        │  │  192.168.1.101    │  │  (stopped)   │  │  │  │
+│  │  │  │                   │  │  Alpine 3.19      │  │              │  │  │  │
+│  │  │  │  SSH key ✓        │  │  SSH ✓ running    │  │  cloned from │  │  │  │
+│  │  │  │  root pw ✓        │  │  root pw ✓        │  │  VM 100      │  │  │  │
+│  │  │  │  sshd ✓           │  │  ← ACTIVE NODE    │  │              │  │  │  │
+│  │  │  └──────────────────┘  └──────────────────┘  └──────────────┘  │  │  │
+│  │  └──────────────────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  WSL2 / Ubuntu                                                               │
+│  │                                                                          │
+│  ├─ Terraform ──────────────→  https://192.168.1.100:8006  (Proxmox API)   │
+│  │   terraform apply              provisions/destroys VMs                   │
+│  │   scripts/scale.sh             interactive wrapper                       │
+│  │                                                                          │
+│  ├─ Ansible ───────────────→  ssh root@192.168.1.101  (active VM)          │
+│  │   raw module only              MOTD, SSH keys, infra-info                │
+│  │   no Python needed             works without internet in VM              │
+│  │                                                                          │
+│  └─ autoscale.sh ──────────→  triggers terraform on CPU threshold          │
+│                                                                              │
+│  Network reachability:                                                       │
+│  WSL2      → Proxmox API    (192.168.1.100:8006)  ✅                        │
+│  WSL2      → Active VM SSH  (192.168.1.101:22)    ✅                        │
+│  Active VM → Proxmox host   (192.168.1.100)        ✅                        │
+│  Active VM → Internet       (8.8.8.8)              ❌ (router restriction)   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **What happens when you run `bash scripts/scale.sh 2`:**

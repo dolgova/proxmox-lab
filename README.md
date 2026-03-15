@@ -1,6 +1,6 @@
 # Proxmox Private Cloud Lab
 
-A fully automated private cloud environment built on **Proxmox VE**, demonstrating Infrastructure as Code, configuration management, and autoscaling — running on a single Windows laptop.
+A fully automated private cloud environment built on Proxmox VE, demonstrating Infrastructure as Code, configuration management, and autoscaling — running on a single Windows laptop.
 
 ---
 

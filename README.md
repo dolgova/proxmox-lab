@@ -1,8 +1,6 @@
-# 🖥️ Proxmox Private Cloud Lab
+# Proxmox Private Cloud Lab
 
 A fully automated private cloud environment built on **Proxmox VE**, demonstrating Infrastructure as Code, configuration management, and autoscaling — running on a single Windows laptop.
-
-> Built as part of a Private Cloud Administrator assessment for Maritime Capital, LLC.
 
 ---
 
@@ -42,46 +40,35 @@ This lab provisions a production-style private cloud on a local Windows machine.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  Windows 11 Laptop  (192.168.1.76)                                           │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │  VirtualBox                                                            │  │
-│  │                                                                        │  │
-│  │  ┌──────────────────────────────────────────────────────────────────┐  │  │
-│  │  │  Proxmox VE 9.1   (192.168.1.100:8006)                           │  │  │
-│  │  │                                                                  │  │  │
-│  │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │  │  │
-│  │  │  │  VM 100           │  │  VM 101           │  │  VM 102+     │  │  │  │
-│  │  │  │  golden-template  │  │  web-node-1       │  │  web-node-2+ │  │  │  │
-│  │  │  │  (stopped)        │  │  192.168.1.101    │  │  (stopped)   │  │  │  │
-│  │  │  │                   │  │  Alpine 3.19      │  │              │  │  │  │
-│  │  │  │  SSH key ✓        │  │  SSH ✓ running    │  │  cloned from │  │  │  │
-│  │  │  │  root pw ✓        │  │  root pw ✓        │  │  VM 100      │  │  │  │
-│  │  │  │  sshd ✓           │  │  ← ACTIVE NODE    │  │              │  │  │  │
-│  │  │  └──────────────────┘  └──────────────────┘  └──────────────┘  │  │  │
-│  │  └──────────────────────────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  WSL2 / Ubuntu                                                               │
-│  │                                                                          │
-│  ├─ Terraform ──────────────→  https://192.168.1.100:8006  (Proxmox API)   │
-│  │   terraform apply              provisions/destroys VMs                   │
-│  │   scripts/scale.sh             interactive wrapper                       │
-│  │                                                                          │
-│  ├─ Ansible ───────────────→  ssh root@192.168.1.101  (active VM)          │
-│  │   raw module only              MOTD, SSH keys, infra-info                │
-│  │   no Python needed             works without internet in VM              │
-│  │                                                                          │
-│  └─ autoscale.sh ──────────→  triggers terraform on CPU threshold          │
-│                                                                              │
-│  Network reachability:                                                       │
-│  WSL2      → Proxmox API    (192.168.1.100:8006)  ✅                        │
-│  WSL2      → Active VM SSH  (192.168.1.101:22)    ✅                        │
-│  Active VM → Proxmox host   (192.168.1.100)        ✅                        │
-│  Active VM → Internet       (8.8.8.8)              ❌ (router restriction)   │
-└──────────────────────────────────────────────────────────────────────────────┘
+Windows 11 Laptop (192.168.1.76)
+│
+├── VirtualBox
+│   └── Proxmox VE 9.1 (192.168.1.100:8006)
+│       │
+│       ├── VM 100 · golden-template (stopped)
+│       │   Alpine 3.19 · SSH key + root pw + sshd pre-configured
+│       │
+│       ├── VM 101 · web-node-1 (ACTIVE) ← 192.168.1.101
+│       │   Cloned from VM 100 · SSH running
+│       │
+│       └── VM 102+ · web-node-2+ (stopped)
+│           Cloned from VM 100 · started via scale.sh
+│
+├── WSL2 / Ubuntu
+│   │
+│   ├── Terraform ──→ Proxmox API (https://192.168.1.100:8006)
+│   │   Provisions/destroys VMs · bpg/proxmox provider
+│   │
+│   ├── Ansible ────→ Active VM SSH (root@192.168.1.101)
+│   │   Raw module only · no Python needed
+│   │
+│   ├── scale.sh ───→ Wraps Terraform · enforces one-VM-at-a-time
+│   │
+│   └── autoscale.sh → Triggers scale.sh on CPU threshold
+│
+└── Network
+    WSL2 → Proxmox API  ✅    WSL2 → Active VM SSH  ✅
+    VM   → Proxmox host ✅    VM   → Internet       ❌ (router restriction)
 ```
 
 **What happens when you run `bash scripts/scale.sh 2`:**
@@ -143,7 +130,6 @@ Second, for Ansible I switched to using the `raw` module instead of the standard
 
 | Tool | Why I chose it |
 |---|---|
-| **Proxmox VE** | Free, production-grade hypervisor with a full REST API. Every action you take in the UI is also an API call — Terraform can talk directly to it without any middleware |
 | **Terraform (bpg/proxmox)** | Declarative state management — I just say how many nodes I want and Terraform figures out what to create or destroy. I originally used `telmate/proxmox` but hit a known bug on Proxmox 9 and switched to `bpg/proxmox` which works correctly |
 | **Ansible (raw module)** | Agentless and SSH-based. I use the raw module because my VMs don't have internet, so I can't install Python. Raw just sends shell commands over SSH — no agent needed |
 | **Alpine Linux** | Uses ~90MB RAM and boots in 10 seconds. I started with Ubuntu but its cloud-init process was crashing Proxmox on my laptop. Alpine was stable from the first boot |
@@ -181,7 +167,7 @@ Mount disk manually                 configure-node.sh: set --kvm 0
   ↓                                   ↓
 Set root password                   qm start
   ↓                                   ↓
-Configure static IP                 SSH works immediately ✅
+Configure static IP                 SSH works immediately 
   ↓
 Enable sshd
   ↓
@@ -358,7 +344,7 @@ terraform apply -var="node_count=1" -auto-approve
 
 ## Ansible in Action
 
-All Ansible demos use the `raw` module — no Python installation required in the target VM. This is the right choice for an Alpine environment without internet access.
+All Ansible demos use the `raw` module — no Python installation required in the target VM (due to no internet access on VM's) 
 
 ### Test connectivity
 
@@ -375,7 +361,7 @@ ansible web_nodes -i inventory.ini -m raw -a "hostname"
 
 ```bash
 ansible web_nodes -i inventory.ini -m raw -a "
-printf 'Welcome to Proxmox Lab\nNode: web-node-1\nIP: 192.168.1.101\nManaged by: Ansible + Terraform\nCluster: Maritime Capital Lab\n' > /etc/motd
+printf 'Welcome to Proxmox Lab\nNode: web-node-1\nIP: 192.168.1.101\nManaged by: Ansible + Terraform\nCluster: Lab\n' > /etc/motd
 cat /etc/motd
 "
 ```

@@ -1,7 +1,6 @@
 # Proxmox Lab — Claude Code Context
 
-This is a Proxmox Private Cloud Lab built for the Maritime Capital Private Cloud
-Administrator assessment. It demonstrates IaC, configuration management, and
+This is a Proxmox Private Cloud Lab built for a private lab. It demonstrates IaC, configuration management, and
 autoscaling running on a single Windows 11 laptop via VirtualBox.
 
 ---

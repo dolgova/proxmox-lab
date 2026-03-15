@@ -241,7 +241,7 @@ bcdedit /set hypervisorlaunchtype auto
 
 ## Installation
 
-### Phase 1 — VirtualBox
+### Step 1 — VirtualBox
 
 1. Download and install VirtualBox 7.x + Extension Pack from https://www.virtualbox.org
 2. Create a VM: Linux / Debian 64-bit / 4GB RAM / 60GB disk / Bridged Adapter
@@ -251,7 +251,7 @@ bcdedit /set hypervisorlaunchtype auto
 & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" modifyvm "Proxmox-VE" --nested-hw-virt on
 ```
 
-### Phase 2 — Install Proxmox VE
+### Step 2 — Install Proxmox VE
 
 1. Download Proxmox VE 9.x ISO from https://www.proxmox.com/en/downloads
 2. Attach ISO to the VM and boot
@@ -259,7 +259,7 @@ bcdedit /set hypervisorlaunchtype auto
    - IP: `192.168.1.100/24`, Gateway: `192.168.1.1`, DNS: `8.8.8.8`
 4. After reboot, remove the ISO and access the UI at `https://192.168.1.100:8006`
 
-### Phase 3 — Proxmox Init Script
+### Step 3 — Proxmox Init Script
 
 ```bash
 # From WSL2
@@ -268,7 +268,7 @@ ssh proxmox "bash /root/proxmox-init.sh"
 # SAVE the API token printed at the end
 ```
 
-### Phase 4 — WSL2 SSH Setup
+### Step 4 — WSL2 SSH Setup
 
 ```bash
 ssh-keygen -t ed25519 -C 'proxmox-lab' -f ~/.ssh/proxmox-lab -N ""
@@ -285,21 +285,21 @@ EOF
 ssh proxmox echo "connected"
 ```
 
-### Phase 5 — Install Terraform & Ansible
+### Step 5 — Install Terraform & Ansible
 
 ```bash
 bash scripts/install-deps.sh
 terraform version && ansible --version
 ```
 
-### Phase 6 — Set Proxmox Password
+### Step 6 — Set Proxmox Password
 
 ```bash
 export TF_VAR_proxmox_password="YourProxmoxRootPassword"
 echo 'export TF_VAR_proxmox_password="YourProxmoxRootPassword"' >> ~/.bashrc
 ```
 
-### Phase 7 — Terraform Init
+### Step 7 — Terraform Init
 
 ```bash
 cd terraform/

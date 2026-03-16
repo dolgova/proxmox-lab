@@ -422,6 +422,16 @@ terraform output                                        # show current state
 terraform destroy -auto-approve                         # destroy ALL VMs
 terraform state rm proxmox_virtual_environment_vm.web_node   # clear state
 terraform import proxmox_virtual_environment_vm.web_node[0] pve/101  # import
+
+A note on destroying VMs
+Terraform is supposed to handle destroy entirely on its own — and in a clean environment it does. You should never need to SSH into Proxmox just to delete a VM.
+In practice with this setup, you may occasionally see ssh proxmox "qm stop/destroy" used as a workaround for two specific situations:
+1. Timeout during destroy — The bpg/proxmox provider waits for a clean shutdown which can take several minutes on a slow NEM-emulated VM. If it times out, it leaves the VM in a broken state that requires manual cleanup.
+2. State drift — If VMs were ever created or deleted outside of Terraform (via the Proxmox UI or manually), Terraform's state file no longer matches reality. Running terraform destroy then fails because it tries to destroy VMs that don't exist or can't find the ones that do.
+The correct workflow that avoids all of this is to always go through scale.sh and terraform apply — never touch VMs in the Proxmox UI directly. If state drift does occur, fix it with:
+# Re-sync state then destroy cleanly
+terraform state rm proxmox_virtual_environment_vm.web_node
+terraform apply -var="node_count=1" -auto-approve
 ```
 
 ### Proxmox VM Management
